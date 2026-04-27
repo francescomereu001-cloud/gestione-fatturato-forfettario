@@ -561,13 +561,13 @@ export default function App() {
             <h3>Inserisci nuova fattura</h3>
 
             <div className="formGrid">
-              <Input label="Numero fattura" value={invoiceForm.numero} onChange={(v) => setInvoiceForm({ ...invoiceForm, numero: v })} />
-              <Input label="Data fattura" type="date" value={invoiceForm.data} onChange={(v) => setInvoiceForm({ ...invoiceForm, data: v })} />
-              <Input label="Cliente / società" value={invoiceForm.cliente} onChange={(v) => setInvoiceForm({ ...invoiceForm, cliente: v })} />
-              <Input label="Descrizione" value={invoiceForm.descrizione} onChange={(v) => setInvoiceForm({ ...invoiceForm, descrizione: v })} />
-              <Input label="Lordo fattura" type="number" value={invoiceForm.lordo} onChange={(v) => setInvoiceForm({ ...invoiceForm, lordo: Number(v) })} />
-              <Input label="ENASARCO" type="number" value={invoiceForm.enasarco} onChange={(v) => setInvoiceForm({ ...invoiceForm, enasarco: Number(v) })} />
-              <Input label="Netto a pagare" type="number" value={invoiceForm.netto} onChange={(v) => setInvoiceForm({ ...invoiceForm, netto: Number(v) })} />
+              <Input label="Numero fattura" value={invoiceForm.numero} onChange={(v: any) => setInvoiceForm({ ...invoiceForm, numero: v })} />
+              <Input label="Data fattura" type="date" value={invoiceForm.data} onChange={(v: any) => setInvoiceForm({ ...invoiceForm, data: v })} />
+              <Input label="Cliente / società" value={invoiceForm.cliente} onChange={(v: any) => setInvoiceForm({ ...invoiceForm, cliente: v })} />
+              <Input label="Descrizione" value={invoiceForm.descrizione} onChange={(v: any) => setInvoiceForm({ ...invoiceForm, descrizione: v })} />
+              <Input label="Lordo fattura" type="number" value={invoiceForm.lordo} onChange={(v: any) => setInvoiceForm({ ...invoiceForm, lordo: Number(v) })} />
+              <Input label="ENASARCO" type="number" value={invoiceForm.enasarco} onChange={(v: any) => setInvoiceForm({ ...invoiceForm, enasarco: Number(v) })} />
+              <Input label="Netto a pagare" type="number" value={invoiceForm.netto} onChange={(v: any) => setInvoiceForm({ ...invoiceForm, netto: Number(v) })} />
 
               <label className="field">
                 Categoria
@@ -613,10 +613,10 @@ export default function App() {
             <h3>Impostazioni fiscali {selectedYear}</h3>
 
             <div className="formGrid">
-              <Input label="Aliquota imposta sostitutiva %" type="number" value={yearSettings.aliquota_imposta} onChange={(v) => updateSetting("aliquota_imposta", Number(v))} />
-              <Input label="Coefficiente redditività %" type="number" value={yearSettings.coefficiente_redditivita} onChange={(v) => updateSetting("coefficiente_redditivita", Number(v))} />
-              <Input label="Aliquota INPS %" type="number" value={yearSettings.aliquota_inps} onChange={(v) => updateSetting("aliquota_inps", Number(v))} />
-              <Input label="Minimale INPS" type="number" value={yearSettings.minimale_inps} onChange={(v) => updateSetting("minimale_inps", Number(v))} />
+              <Input label="Aliquota imposta sostitutiva %" type="number" value={yearSettings.aliquota_imposta} onChange={(v: any) => updateSetting("aliquota_imposta", Number(v))} />
+              <Input label="Coefficiente redditività %" type="number" value={yearSettings.coefficiente_redditivita} onChange={(v: any) => updateSetting("coefficiente_redditivita", Number(v))} />
+              <Input label="Aliquota INPS %" type="number" value={yearSettings.aliquota_inps} onChange={(v: any) => updateSetting("aliquota_inps", Number(v))} />
+              <Input label="Minimale INPS" type="number" value={yearSettings.minimale_inps} onChange={(v: any) => updateSetting("minimale_inps", Number(v))} />
             </div>
 
             <button className="primary" onClick={saveSettings}>
@@ -635,9 +635,9 @@ export default function App() {
             <h3>F24 e pagamenti fiscali</h3>
 
             <div className="formGrid">
-              <Input label="Data pagamento" type="date" value={paymentForm.data} onChange={(v) => setPaymentForm({ ...paymentForm, data: v })} />
-              <Input label="Descrizione" value={paymentForm.descrizione} onChange={(v) => setPaymentForm({ ...paymentForm, descrizione: v })} />
-              <Input label="Importo" type="number" value={paymentForm.importo} onChange={(v) => setPaymentForm({ ...paymentForm, importo: Number(v) })} />
+              <Input label="Data pagamento" type="date" value={paymentForm.data} onChange={(v: any) => setPaymentForm({ ...paymentForm, data: v })} />
+              <Input label="Descrizione" value={paymentForm.descrizione} onChange={(v: any) => setPaymentForm({ ...paymentForm, descrizione: v })} />
+              <Input label="Importo" type="number" value={paymentForm.importo} onChange={(v: any) => setPaymentForm({ ...paymentForm, importo: Number(v) })} />
 
               <label className="field">
                 Tipo
