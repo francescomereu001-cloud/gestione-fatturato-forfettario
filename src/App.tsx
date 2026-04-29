@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Euro,
   TrendingUp,
@@ -136,6 +136,7 @@ export default function App() {
   const [selectedYear, setSelectedYear] = useState(currentYear);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   const [invoiceForm, setInvoiceForm] = useState<Invoice>({
     numero: "",
@@ -160,37 +161,34 @@ export default function App() {
     tipo: "F24",
   });
 
-  const loadAll = async () => {
+  const loadAll = useCallback(async () => {
     setLoading(true);
+    setErrorMessage("");
 
-    const inv = await supabase
-      .from("invoices")
-      .select("*")
-      .order("data", { ascending: false });
+    const [inv, pay, set] = await Promise.all([
+      supabase.from("invoices").select("*").order("data", { ascending: false }),
+      supabase.from("tax_payments").select("*").order("data", { ascending: false }),
+      supabase.from("tax_settings").select("*").order("anno", { ascending: false }),
+    ]);
 
-    const pay = await supabase
-      .from("tax_payments")
-      .select("*")
-      .order("data", { ascending: false });
+    if (inv.error || pay.error || set.error) {
+      setErrorMessage(
+        inv.error?.message || pay.error?.message || set.error?.message || "Errore caricamento dati."
+      );
+      setLoading(false);
+      return;
+    }
 
-    const set = await supabase
-      .from("tax_settings")
-      .select("*")
-      .order("anno", { ascending: false });
-
-    if (inv.data) setInvoices(inv.data);
-    if (pay.data) setPayments(pay.data);
-    if (set.data) setSettings(set.data);
-
+    setInvoices(inv.data ?? []);
+    setPayments(pay.data ?? []);
+    setSettings(set.data ?? []);
     setLoading(false);
-  };
+  }, []);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      void loadAll();
-    }, 0);
-    return () => clearTimeout(timer);
-  }, []);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadAll();
+  }, [loadAll]);
 
   const yearSettings =
     settings.find((s) => s.anno === selectedYear) || defaultSettings(selectedYear);
@@ -499,6 +497,7 @@ export default function App() {
             {loading ? "Aggiorno..." : "Aggiorna"}
           </button>
         </header>
+        {errorMessage ? <div className="notice">{errorMessage}</div> : null}
 
         {activeTab === "dashboard" && (
           <>
