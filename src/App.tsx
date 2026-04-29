@@ -24,7 +24,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import * as XLSX from "xlsx";
-import { supabase } from "./supabase";
+import { supabase, supabaseConfigError } from "./supabase";
 import "./App.css";
 
 type Invoice = {
@@ -162,6 +162,11 @@ export default function App() {
   });
 
   const loadAll = useCallback(async () => {
+    if (!supabase) {
+      setErrorMessage(supabaseConfigError || "Configurazione Supabase non valida.");
+      return;
+    }
+
     setLoading(true);
     setErrorMessage("");
 
@@ -264,6 +269,7 @@ export default function App() {
   }, [invoices, settings]);
 
   const saveInvoice = async () => {
+    if (!supabase) return;
     const payload = {
       ...invoiceForm,
       anno: invoiceForm.data ? new Date(invoiceForm.data).getFullYear() : selectedYear,
@@ -295,12 +301,14 @@ export default function App() {
   };
 
   const deleteInvoice = async (id?: string) => {
+    if (!supabase) return;
     if (!id) return;
     await supabase.from("invoices").delete().eq("id", id);
     loadAll();
   };
 
   const savePayment = async () => {
+    if (!supabase) return;
     await supabase.from("tax_payments").insert({
       ...paymentForm,
       anno: selectedYear,
@@ -319,6 +327,7 @@ export default function App() {
   };
 
   const saveSettings = async () => {
+    if (!supabase) return;
     await supabase
       .from("tax_settings")
       .upsert({ ...yearSettings, anno: selectedYear }, { onConflict: "anno" });
@@ -341,6 +350,7 @@ export default function App() {
   };
 
   const importExcel = async (file: File) => {
+    if (!supabase) return;
     const data = await file.arrayBuffer();
     const workbook = XLSX.read(data, { cellDates: true });
     const rowsToInsert: Invoice[] = [];
