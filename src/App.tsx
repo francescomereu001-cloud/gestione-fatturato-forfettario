@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import {
   Euro,
   TrendingUp,
@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   BarChart3,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -23,7 +24,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import * as XLSX from "xlsx";
-import { supabase } from "./supabase";
+import { supabase, supabaseConfigError } from "./supabase";
 import "./App.css";
 
 type Invoice = {
@@ -76,7 +77,7 @@ const defaultSettings = (anno: number): TaxSettings => ({
   minimale_inps: 18808,
 });
 
-const norm = (v: any) =>
+const norm = (v: unknown) =>
   String(v ?? "")
     .trim()
     .toLowerCase()
@@ -84,7 +85,7 @@ const norm = (v: any) =>
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/\s+/g, " ");
 
-const parseAmount = (v: any): number => {
+const parseAmount = (v: unknown): number => {
   if (typeof v === "number") return v;
   const s = String(v ?? "")
     .replace(/[€\s]/g, "")
@@ -95,7 +96,7 @@ const parseAmount = (v: any): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-const parseExcelDate = (v: any): string | undefined => {
+const parseExcelDate = (v: unknown): string | undefined => {
   if (!v) return undefined;
 
   if (typeof v === "number") {
@@ -122,12 +123,20 @@ const parseExcelDate = (v: any): string | undefined => {
 };
 
 export default function App() {
+  const navItems: Array<[string, string, LucideIcon]> = [
+    ["dashboard", "Dashboard", BarChart3],
+    ["fatture", "Fatture", Receipt],
+    ["fiscale", "Fiscale", PiggyBank],
+    ["pagamenti", "F24 / Pagamenti", Wallet],
+    ["import", "Import Excel", Upload],
+  ];
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [payments, setPayments] = useState<TaxPayment[]>([]);
   const [settings, setSettings] = useState<TaxSettings[]>([]);
   const [selectedYear, setSelectedYear] = useState(currentYear);
   const [activeTab, setActiveTab] = useState("dashboard");
   const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   const [invoiceForm, setInvoiceForm] = useState<Invoice>({
     numero: "",
@@ -152,34 +161,39 @@ export default function App() {
     tipo: "F24",
   });
 
-  const loadAll = async () => {
+  const loadAll = useCallback(async () => {
+    if (!supabase) {
+      setErrorMessage(supabaseConfigError || "Configurazione Supabase non valida.");
+      return;
+    }
+
     setLoading(true);
+    setErrorMessage("");
 
-    const inv = await supabase
-      .from("invoices")
-      .select("*")
-      .order("data", { ascending: false });
+    const [inv, pay, set] = await Promise.all([
+      supabase.from("invoices").select("*").order("data", { ascending: false }),
+      supabase.from("tax_payments").select("*").order("data", { ascending: false }),
+      supabase.from("tax_settings").select("*").order("anno", { ascending: false }),
+    ]);
 
-    const pay = await supabase
-      .from("tax_payments")
-      .select("*")
-      .order("data", { ascending: false });
+    if (inv.error || pay.error || set.error) {
+      setErrorMessage(
+        inv.error?.message || pay.error?.message || set.error?.message || "Errore caricamento dati."
+      );
+      setLoading(false);
+      return;
+    }
 
-    const set = await supabase
-      .from("tax_settings")
-      .select("*")
-      .order("anno", { ascending: false });
-
-    if (inv.data) setInvoices(inv.data);
-    if (pay.data) setPayments(pay.data);
-    if (set.data) setSettings(set.data);
-
+    setInvoices(inv.data ?? []);
+    setPayments(pay.data ?? []);
+    setSettings(set.data ?? []);
     setLoading(false);
-  };
+  }, []);
 
   useEffect(() => {
-    loadAll();
-  }, []);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadAll();
+  }, [loadAll]);
 
   const yearSettings =
     settings.find((s) => s.anno === selectedYear) || defaultSettings(selectedYear);
@@ -255,6 +269,7 @@ export default function App() {
   }, [invoices, settings]);
 
   const saveInvoice = async () => {
+    if (!supabase) return;
     const payload = {
       ...invoiceForm,
       anno: invoiceForm.data ? new Date(invoiceForm.data).getFullYear() : selectedYear,
@@ -286,12 +301,14 @@ export default function App() {
   };
 
   const deleteInvoice = async (id?: string) => {
+    if (!supabase) return;
     if (!id) return;
     await supabase.from("invoices").delete().eq("id", id);
     loadAll();
   };
 
   const savePayment = async () => {
+    if (!supabase) return;
     await supabase.from("tax_payments").insert({
       ...paymentForm,
       anno: selectedYear,
@@ -310,6 +327,7 @@ export default function App() {
   };
 
   const saveSettings = async () => {
+    if (!supabase) return;
     await supabase
       .from("tax_settings")
       .upsert({ ...yearSettings, anno: selectedYear }, { onConflict: "anno" });
@@ -332,6 +350,7 @@ export default function App() {
   };
 
   const importExcel = async (file: File) => {
+    if (!supabase) return;
     const data = await file.arrayBuffer();
     const workbook = XLSX.read(data, { cellDates: true });
     const rowsToInsert: Invoice[] = [];
@@ -339,7 +358,7 @@ export default function App() {
     workbook.SheetNames.forEach((sheetName) => {
       const sheet = workbook.Sheets[sheetName];
 
-      const rows: any[][] = XLSX.utils.sheet_to_json(sheet, {
+      const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, {
         header: 1,
         defval: "",
         raw: true,
@@ -456,13 +475,7 @@ export default function App() {
         </div>
 
         <nav>
-          {[
-            ["dashboard", "Dashboard", BarChart3],
-            ["fatture", "Fatture", Receipt],
-            ["fiscale", "Fiscale", PiggyBank],
-            ["pagamenti", "F24 / Pagamenti", Wallet],
-            ["import", "Import Excel", Upload],
-          ].map(([id, label, Icon]: any) => (
+          {navItems.map(([id, label, Icon]) => (
             <button
               key={id}
               className={activeTab === id ? "active" : ""}
@@ -494,6 +507,7 @@ export default function App() {
             {loading ? "Aggiorno..." : "Aggiorna"}
           </button>
         </header>
+        {errorMessage ? <div className="notice">{errorMessage}</div> : null}
 
         {activeTab === "dashboard" && (
           <>
@@ -517,7 +531,7 @@ export default function App() {
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="mese" />
                     <YAxis />
-                    <Tooltip formatter={(v: any) => euro(Number(v))} />
+                    <Tooltip formatter={(v) => euro(Number(v ?? 0))} />
                     <Bar dataKey="fatturato" radius={[8, 8, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
@@ -561,13 +575,13 @@ export default function App() {
             <h3>Inserisci nuova fattura</h3>
 
             <div className="formGrid">
-              <Input label="Numero fattura" value={invoiceForm.numero} onChange={(v: any) => setInvoiceForm({ ...invoiceForm, numero: v })} />
-              <Input label="Data fattura" type="date" value={invoiceForm.data} onChange={(v: any) => setInvoiceForm({ ...invoiceForm, data: v })} />
-              <Input label="Cliente / società" value={invoiceForm.cliente} onChange={(v: any) => setInvoiceForm({ ...invoiceForm, cliente: v })} />
-              <Input label="Descrizione" value={invoiceForm.descrizione} onChange={(v: any) => setInvoiceForm({ ...invoiceForm, descrizione: v })} />
-              <Input label="Lordo fattura" type="number" value={invoiceForm.lordo} onChange={(v: any) => setInvoiceForm({ ...invoiceForm, lordo: Number(v) })} />
-              <Input label="ENASARCO" type="number" value={invoiceForm.enasarco} onChange={(v: any) => setInvoiceForm({ ...invoiceForm, enasarco: Number(v) })} />
-              <Input label="Netto a pagare" type="number" value={invoiceForm.netto} onChange={(v: any) => setInvoiceForm({ ...invoiceForm, netto: Number(v) })} />
+              <Input label="Numero fattura" value={invoiceForm.numero} onChange={(v) => setInvoiceForm({ ...invoiceForm, numero: v })} />
+              <Input label="Data fattura" type="date" value={invoiceForm.data} onChange={(v) => setInvoiceForm({ ...invoiceForm, data: v })} />
+              <Input label="Cliente / società" value={invoiceForm.cliente} onChange={(v) => setInvoiceForm({ ...invoiceForm, cliente: v })} />
+              <Input label="Descrizione" value={invoiceForm.descrizione} onChange={(v) => setInvoiceForm({ ...invoiceForm, descrizione: v })} />
+              <Input label="Lordo fattura" type="number" value={invoiceForm.lordo} onChange={(v) => setInvoiceForm({ ...invoiceForm, lordo: Number(v) })} />
+              <Input label="ENASARCO" type="number" value={invoiceForm.enasarco} onChange={(v) => setInvoiceForm({ ...invoiceForm, enasarco: Number(v) })} />
+              <Input label="Netto a pagare" type="number" value={invoiceForm.netto} onChange={(v) => setInvoiceForm({ ...invoiceForm, netto: Number(v) })} />
 
               <label className="field">
                 Categoria
@@ -613,10 +627,10 @@ export default function App() {
             <h3>Impostazioni fiscali {selectedYear}</h3>
 
             <div className="formGrid">
-              <Input label="Aliquota imposta sostitutiva %" type="number" value={yearSettings.aliquota_imposta} onChange={(v: any) => updateSetting("aliquota_imposta", Number(v))} />
-              <Input label="Coefficiente redditività %" type="number" value={yearSettings.coefficiente_redditivita} onChange={(v: any) => updateSetting("coefficiente_redditivita", Number(v))} />
-              <Input label="Aliquota INPS %" type="number" value={yearSettings.aliquota_inps} onChange={(v: any) => updateSetting("aliquota_inps", Number(v))} />
-              <Input label="Minimale INPS" type="number" value={yearSettings.minimale_inps} onChange={(v: any) => updateSetting("minimale_inps", Number(v))} />
+              <Input label="Aliquota imposta sostitutiva %" type="number" value={yearSettings.aliquota_imposta} onChange={(v) => updateSetting("aliquota_imposta", Number(v))} />
+              <Input label="Coefficiente redditività %" type="number" value={yearSettings.coefficiente_redditivita} onChange={(v) => updateSetting("coefficiente_redditivita", Number(v))} />
+              <Input label="Aliquota INPS %" type="number" value={yearSettings.aliquota_inps} onChange={(v) => updateSetting("aliquota_inps", Number(v))} />
+              <Input label="Minimale INPS" type="number" value={yearSettings.minimale_inps} onChange={(v) => updateSetting("minimale_inps", Number(v))} />
             </div>
 
             <button className="primary" onClick={saveSettings}>
@@ -635,9 +649,9 @@ export default function App() {
             <h3>F24 e pagamenti fiscali</h3>
 
             <div className="formGrid">
-              <Input label="Data pagamento" type="date" value={paymentForm.data} onChange={(v: any) => setPaymentForm({ ...paymentForm, data: v })} />
-              <Input label="Descrizione" value={paymentForm.descrizione} onChange={(v: any) => setPaymentForm({ ...paymentForm, descrizione: v })} />
-              <Input label="Importo" type="number" value={paymentForm.importo} onChange={(v: any) => setPaymentForm({ ...paymentForm, importo: Number(v) })} />
+              <Input label="Data pagamento" type="date" value={paymentForm.data} onChange={(v) => setPaymentForm({ ...paymentForm, data: v })} />
+              <Input label="Descrizione" value={paymentForm.descrizione} onChange={(v) => setPaymentForm({ ...paymentForm, descrizione: v })} />
+              <Input label="Importo" type="number" value={paymentForm.importo} onChange={(v) => setPaymentForm({ ...paymentForm, importo: Number(v) })} />
 
               <label className="field">
                 Tipo
@@ -701,7 +715,8 @@ export default function App() {
   );
 }
 
-function Card({ icon, title, value, danger }: any) {
+type CardProps = { icon: ReactNode; title: string; value: string; danger?: boolean };
+function Card({ icon, title, value, danger }: CardProps) {
   return (
     <div className={`card ${danger ? "danger" : ""}`}>
       <div className="cardIcon">{icon}</div>
@@ -711,7 +726,8 @@ function Card({ icon, title, value, danger }: any) {
   );
 }
 
-function Row({ label, value, strong }: any) {
+type RowProps = { label: string; value: string; strong?: boolean };
+function Row({ label, value, strong }: RowProps) {
   return (
     <div className={`row ${strong ? "strong" : ""}`}>
       <span>{label}</span>
@@ -720,7 +736,13 @@ function Row({ label, value, strong }: any) {
   );
 }
 
-function Input({ label, value, onChange, type = "text" }: any) {
+type InputProps = {
+  label: string;
+  value?: string | number;
+  onChange: (value: string) => void;
+  type?: "text" | "number" | "date";
+};
+function Input({ label, value, onChange, type = "text" }: InputProps) {
   return (
     <label className="field">
       {label}
