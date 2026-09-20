@@ -5,6 +5,12 @@ remoto non era interrogabile dall'ambiente di sviluppo: la migration assume escl
 l'esistenza delle tre tabelle confermate dal codice (`invoices`, `tax_payments`, `tax_settings`) e
 non modifica le loro constraint preesistenti.
 
+Per evitare che policy storiche con nomi sconosciuti lascino accessi più permissivi, la migration
+interroga `pg_policies` e sostituisce **tutte** le policy preesistenti di queste tre tabelle con le
+sole quattro policy owner-only (`SELECT`, `INSERT`, `UPDATE`, `DELETE`). Revoca inoltre ogni grant
+diretto ad `anon` e concede ad `authenticated` soltanto le operazioni richieste dall'app. Le policy
+di `profiles`, tabella nuova, vengono invece gestite esplicitamente per nome.
+
 ## 1. Creare o invitare l'utente
 
 In Supabase Dashboard aprire **Authentication → Users** e usare **Add user** oppure **Invite user**.

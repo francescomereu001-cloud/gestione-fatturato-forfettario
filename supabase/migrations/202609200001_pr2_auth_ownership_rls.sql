@@ -43,6 +43,11 @@ alter table public.invoices enable row level security;
 alter table public.tax_payments enable row level security;
 alter table public.tax_settings enable row level security;
 
+revoke all on public.invoices, public.tax_payments, public.tax_settings from anon;
+grant select, insert, update, delete
+  on public.invoices, public.tax_payments, public.tax_settings
+  to authenticated;
+
 drop policy if exists profiles_select_own on public.profiles;
 drop policy if exists profiles_insert_own on public.profiles;
 drop policy if exists profiles_update_own on public.profiles;
@@ -55,12 +60,17 @@ create policy profiles_delete_own on public.profiles for delete to authenticated
 do $$
 declare
   table_name text;
+  existing_policy record;
 begin
   foreach table_name in array array['invoices', 'tax_payments', 'tax_settings'] loop
-    execute format('drop policy if exists %I on public.%I', table_name || '_select_own', table_name);
-    execute format('drop policy if exists %I on public.%I', table_name || '_insert_own', table_name);
-    execute format('drop policy if exists %I on public.%I', table_name || '_update_own', table_name);
-    execute format('drop policy if exists %I on public.%I', table_name || '_delete_own', table_name);
+    for existing_policy in
+      select policyname
+      from pg_policies
+      where schemaname = 'public' and tablename = table_name
+    loop
+      execute format('drop policy %I on public.%I', existing_policy.policyname, table_name);
+    end loop;
+
     execute format('create policy %I on public.%I for select to authenticated using ((select auth.uid()) = user_id)', table_name || '_select_own', table_name);
     execute format('create policy %I on public.%I for insert to authenticated with check ((select auth.uid()) = user_id)', table_name || '_insert_own', table_name);
     execute format('create policy %I on public.%I for update to authenticated using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id)', table_name || '_update_own', table_name);
