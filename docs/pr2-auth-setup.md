@@ -12,6 +12,12 @@ diretti su nessuna tabella protetta; `authenticated` dispone soltanto del CRUD n
 limitato da RLS. Le policy di `profiles`, tabella nuova, vengono invece gestite esplicitamente per
 nome.
 
+La migration PR2.1 `pr2_1_authenticated_least_privilege` revoca inoltre eventuali privilegi
+PostgreSQL preesistenti del ruolo `authenticated` (ad esempio `TRUNCATE`, `REFERENCES`, `TRIGGER`) e
+riconcede esclusivamente `SELECT`, `INSERT`, `UPDATE`, `DELETE` su `profiles`, `invoices`,
+`tax_payments` e `tax_settings`. Questo evita che privilegi non necessari aggirino il modello di
+least privilege; le operazioni CRUD restano comunque soggette alle policy RLS owner-only.
+
 ## 1. Creare o invitare l'utente
 
 In Supabase Dashboard aprire **Authentication → Users** e usare **Add user** oppure **Invite user**.
