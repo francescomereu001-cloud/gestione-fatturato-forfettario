@@ -43,6 +43,11 @@ alter table public.invoices enable row level security;
 alter table public.tax_payments enable row level security;
 alter table public.tax_settings enable row level security;
 
+revoke all on public.profiles from anon;
+grant select, insert, update, delete
+  on public.profiles
+  to authenticated;
+
 revoke all on public.invoices, public.tax_payments, public.tax_settings from anon;
 grant select, insert, update, delete
   on public.invoices, public.tax_payments, public.tax_settings

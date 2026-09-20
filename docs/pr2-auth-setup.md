@@ -7,9 +7,10 @@ non modifica le loro constraint preesistenti.
 
 Per evitare che policy storiche con nomi sconosciuti lascino accessi più permissivi, la migration
 interroga `pg_policies` e sostituisce **tutte** le policy preesistenti di queste tre tabelle con le
-sole quattro policy owner-only (`SELECT`, `INSERT`, `UPDATE`, `DELETE`). Revoca inoltre ogni grant
-diretto ad `anon` e concede ad `authenticated` soltanto le operazioni richieste dall'app. Le policy
-di `profiles`, tabella nuova, vengono invece gestite esplicitamente per nome.
+sole quattro policy owner-only (`SELECT`, `INSERT`, `UPDATE`, `DELETE`). `anon` non ha privilegi
+diretti su nessuna tabella protetta; `authenticated` dispone soltanto del CRUD necessario, sempre
+limitato da RLS. Le policy di `profiles`, tabella nuova, vengono invece gestite esplicitamente per
+nome.
 
 ## 1. Creare o invitare l'utente
 
