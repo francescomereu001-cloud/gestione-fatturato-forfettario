@@ -28,8 +28,16 @@ export function accountPayload(account: Account, userId: string) {
   return ownedBy({ ...account, opening_balance: Number(account.opening_balance) }, userId);
 }
 
+export function normalizeTransactionAmount(transaction: LedgerTransaction): number {
+  const amount = Number(transaction.amount);
+  if (amount === 0) throw new Error("L'importo deve essere diverso da zero.");
+  if (transaction.transaction_type === "income" || transaction.transaction_type === "refund") return Math.abs(amount);
+  if (["expense", "debt_interest", "debt_principal"].includes(transaction.transaction_type)) return -Math.abs(amount);
+  return amount;
+}
+
 export function transactionPayload(transaction: LedgerTransaction, userId: string) {
-  return ownedBy({ ...transaction, amount: Number(transaction.amount), source: "manual" }, userId);
+  return ownedBy({ ...transaction, amount: normalizeTransactionAmount(transaction), source: "manual" }, userId);
 }
 
 export function internalTransferPayloads(transaction: LedgerTransaction, userId: string, groupId: string = crypto.randomUUID()) {

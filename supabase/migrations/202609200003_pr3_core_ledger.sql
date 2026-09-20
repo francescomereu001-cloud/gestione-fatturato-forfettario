@@ -33,7 +33,14 @@ create table public.transactions (
   account_id uuid not null references public.accounts(id) on delete restrict,
   transaction_date date not null,
   booking_date date,
-  amount numeric not null,
+  amount numeric not null check (
+    amount <> 0
+    and case
+      when transaction_type in ('income', 'refund') then amount > 0
+      when transaction_type in ('expense', 'debt_interest', 'debt_principal') then amount < 0
+      else true
+    end
+  ),
   description text not null,
   merchant text,
   category_id uuid references public.transaction_categories(id) on delete set null,
@@ -58,7 +65,11 @@ create index transactions_transfer_group_id_idx on public.transactions(transfer_
 alter table public.accounts enable row level security;
 alter table public.transaction_categories enable row level security;
 alter table public.transactions enable row level security;
-revoke all on public.accounts, public.transaction_categories, public.transactions from anon;
+revoke all on
+  public.accounts,
+  public.transaction_categories,
+  public.transactions
+from anon, authenticated;
 grant select, insert, update, delete on public.accounts, public.transaction_categories, public.transactions to authenticated;
 
 do $$
@@ -90,5 +101,14 @@ begin
 end $$;
 revoke all on function public.validate_category_parent_ownership() from public, anon, authenticated;
 create trigger categories_validate_parent before insert or update on public.transaction_categories for each row execute function public.validate_category_parent_ownership();
+
+create function public.set_ledger_updated_at() returns trigger language plpgsql set search_path = '' as $$
+begin
+  new.updated_at = now();
+  return new;
+end $$;
+revoke all on function public.set_ledger_updated_at() from public, anon, authenticated;
+create trigger accounts_set_updated_at before update on public.accounts for each row execute function public.set_ledger_updated_at();
+create trigger transactions_set_updated_at before update on public.transactions for each row execute function public.set_ledger_updated_at();
 
 commit;
