@@ -1,73 +1,48 @@
-# React + TypeScript + Vite
+# FinancialMind
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Evoluzione incrementale di **Gestione Fatturato** verso un Financial OS personale. Il principio
+guida è separare i calcoli finanziari deterministici dall'interpretazione: database e funzioni di
+dominio producono i valori ufficiali; un futuro layer AI potrà soltanto spiegarli e proporre scenari.
 
-Currently, two official plugins are available:
+## Stato attuale
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+L'app React + TypeScript + Vite conserva le funzioni esistenti per:
 
-## React Compiler
+- fatture e incassi;
+- stima fiscale configurabile;
+- pagamenti F24;
+- import di fatture `.xls` e `.xlsx`;
+- dashboard annuale.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+La prima fase non modifica lo schema Supabase né le tabelle esistenti (`invoices`, `tax_payments`,
+`tax_settings`). L'audit tecnico e i confini della PR1 sono documentati in
+[`docs/pr1-audit.md`](docs/pr1-audit.md).
 
-## Expanding the ESLint configuration
+## Sviluppo locale
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+Creare un file `.env.local` senza versionarlo:
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```dotenv
+VITE_SUPABASE_URL=https://example.supabase.co
+VITE_SUPABASE_ANON_KEY=...
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+La chiave anon è l'unica chiave Supabase prevista nel client. Non inserire mai service-role key o
+altri segreti nelle variabili `VITE_*`.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
+npm run dev
 ```
+
+## Verifiche
+
+```bash
+npm test
+npm run lint
+npm run build
+```
+
+I test usano il test runner nativo di Node e non introducono dipendenze. Le funzioni in
+`src/domain/calculations` e i parser in `src/import/parsers` devono restare deterministici e privi di
+accessi diretti a Supabase.
