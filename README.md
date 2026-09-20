@@ -14,8 +14,10 @@ L'app React + TypeScript + Vite conserva le funzioni esistenti per:
 - import di fatture `.xls` e `.xlsx`;
 - dashboard annuale.
 
-La prima fase non modifica lo schema Supabase né le tabelle esistenti (`invoices`, `tax_payments`,
-`tax_settings`). L'audit tecnico e i confini della PR1 sono documentati in
+L'accesso ai dati richiede ora una sessione Supabase autenticata; ownership e Row Level Security
+proteggono `invoices`, `tax_payments`, `tax_settings` e `profiles`. La procedura amministrativa per
+applicare la migration e attribuire i dati legacy è in
+[`docs/pr2-auth-setup.md`](docs/pr2-auth-setup.md). L'audit tecnico precedente resta disponibile in
 [`docs/pr1-audit.md`](docs/pr1-audit.md).
 
 ## Sviluppo locale

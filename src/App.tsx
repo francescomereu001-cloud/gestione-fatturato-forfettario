@@ -1,4 +1,5 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
 import {
   Euro,
   TrendingUp,
@@ -25,6 +26,7 @@ import {
 } from "recharts";
 import * as XLSX from "xlsx";
 import { calculateTaxSummary, defaultTaxSettings } from "./domain/calculations/tax";
+import { ownedBy, sessionGateState } from "./auth/ownership";
 import { parseInvoiceWorkbook } from "./import/parsers/invoiceExcel";
 import { supabase, supabaseConfigError } from "./supabase";
 import type { Invoice, TaxPayment, TaxSettings } from "./types/finance";
@@ -40,6 +42,74 @@ const currentYear = new Date().getFullYear();
 
 
 export default function App() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [restoringSession, setRestoringSession] = useState(Boolean(supabase));
+
+  useEffect(() => {
+    if (!supabase) {
+      return;
+    }
+
+    void supabase.auth.getSession().then(({ data, error }) => {
+      if (error) console.error("Impossibile ripristinare la sessione Supabase:", error.message);
+      setSession(data.session);
+      setRestoringSession(false);
+    });
+
+    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+      setRestoringSession(false);
+    });
+
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  const gate = sessionGateState(restoringSession, session?.user.id);
+  if (gate === "loading") return <AuthStatus message="Ripristino della sessione…" />;
+  if (supabaseConfigError) return <AuthStatus message={supabaseConfigError} />;
+  if (gate === "anonymous" || !session) return <Login />;
+
+  return <PrivateApp session={session} />;
+}
+
+function Login() {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
+
+  const login = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!supabase) return;
+    setSubmitting(true);
+    setErrorMessage("");
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) setErrorMessage(error.message);
+    setSubmitting(false);
+  };
+
+  return (
+    <main className="authPage">
+      <form className="authCard" onSubmit={login}>
+        <div className="logo">€</div>
+        <h1>Fatturato PRO</h1>
+        <p className="muted">Accedi con l’utente creato o invitato in Supabase.</p>
+        <Input label="Email" type="email" value={email} onChange={setEmail} />
+        <Input label="Password" type="password" value={password} onChange={setPassword} />
+        {errorMessage ? <div className="notice">{errorMessage}</div> : null}
+        <button className="primary" type="submit" disabled={submitting}>
+          {submitting ? "Accesso…" : "Accedi"}
+        </button>
+      </form>
+    </main>
+  );
+}
+
+function AuthStatus({ message }: { message: string }) {
+  return <main className="authPage"><div className="authCard"><p>{message}</p></div></main>;
+}
+
+function PrivateApp({ session }: { session: Session }) {
   const navItems: Array<[string, string, LucideIcon]> = [
     ["dashboard", "Dashboard", BarChart3],
     ["fatture", "Fatture", Receipt],
@@ -88,9 +158,9 @@ export default function App() {
     setErrorMessage("");
 
     const [inv, pay, set] = await Promise.all([
-      supabase.from("invoices").select("*").order("data", { ascending: false }),
-      supabase.from("tax_payments").select("*").order("data", { ascending: false }),
-      supabase.from("tax_settings").select("*").order("anno", { ascending: false }),
+      supabase.from("invoices").select("*").eq("user_id", session.user.id).order("data", { ascending: false }),
+      supabase.from("tax_payments").select("*").eq("user_id", session.user.id).order("data", { ascending: false }),
+      supabase.from("tax_settings").select("*").eq("user_id", session.user.id).order("anno", { ascending: false }),
     ]);
 
     if (inv.error || pay.error || set.error) {
@@ -105,7 +175,7 @@ export default function App() {
     setPayments(pay.data ?? []);
     setSettings(set.data ?? []);
     setLoading(false);
-  }, []);
+  }, [session.user.id]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -150,7 +220,7 @@ export default function App() {
 
   const saveInvoice = async () => {
     if (!supabase) return;
-    const payload = {
+    const payload = ownedBy({
       ...invoiceForm,
       anno: invoiceForm.data ? new Date(invoiceForm.data).getFullYear() : selectedYear,
       lordo: Number(invoiceForm.lordo || 0),
@@ -158,7 +228,7 @@ export default function App() {
       netto:
         Number(invoiceForm.netto || 0) ||
         Number(invoiceForm.lordo || 0) - Number(invoiceForm.enasarco || 0),
-    };
+    }, session.user.id);
 
     await supabase.from("invoices").insert(payload);
 
@@ -183,17 +253,17 @@ export default function App() {
   const deleteInvoice = async (id?: string) => {
     if (!supabase) return;
     if (!id) return;
-    await supabase.from("invoices").delete().eq("id", id);
+    await supabase.from("invoices").delete().eq("id", id).eq("user_id", session.user.id);
     loadAll();
   };
 
   const savePayment = async () => {
     if (!supabase) return;
-    await supabase.from("tax_payments").insert({
+    await supabase.from("tax_payments").insert(ownedBy({
       ...paymentForm,
       anno: selectedYear,
       importo: Number(paymentForm.importo || 0),
-    });
+    }, session.user.id));
 
     setPaymentForm({
       anno: selectedYear,
@@ -208,9 +278,12 @@ export default function App() {
 
   const saveSettings = async () => {
     if (!supabase) return;
-    await supabase
-      .from("tax_settings")
-      .upsert({ ...yearSettings, anno: selectedYear }, { onConflict: "anno" });
+    const payload = ownedBy({ ...yearSettings, anno: selectedYear }, session.user.id);
+    const query = yearSettings.id
+      ? supabase.from("tax_settings").update(payload).eq("id", yearSettings.id).eq("user_id", session.user.id)
+      : supabase.from("tax_settings").insert(payload);
+    const { error } = await query;
+    if (error) setErrorMessage(error.message);
 
     loadAll();
   };
@@ -241,7 +314,7 @@ export default function App() {
     }
 
     for (let i = 0; i < rowsToInsert.length; i += 500) {
-      const chunk = rowsToInsert.slice(i, i + 500);
+      const chunk = rowsToInsert.slice(i, i + 500).map((row) => ownedBy(row, session.user.id));
       const { error } = await supabase.from("invoices").insert(chunk);
 
       if (error) {
@@ -294,9 +367,11 @@ export default function App() {
             <h2>Gestione economica aziendale</h2>
             <p>Fatture, incassi, accantonamenti, F24 e previsione tasse per anno fiscale.</p>
           </div>
-          <button onClick={loadAll} className="ghost">
-            {loading ? "Aggiorno..." : "Aggiorna"}
-          </button>
+          <div className="topbarActions">
+            <span className="sessionUser">{session.user.email}</span>
+            <button onClick={loadAll} className="ghost">{loading ? "Aggiorno..." : "Aggiorna"}</button>
+            <button onClick={() => void supabase?.auth.signOut()} className="ghost">Esci</button>
+          </div>
         </header>
         {errorMessage ? <div className="notice">{errorMessage}</div> : null}
 
@@ -531,7 +606,7 @@ type InputProps = {
   label: string;
   value?: string | number;
   onChange: (value: string) => void;
-  type?: "text" | "number" | "date";
+  type?: "text" | "number" | "date" | "email" | "password";
 };
 function Input({ label, value, onChange, type = "text" }: InputProps) {
   return (

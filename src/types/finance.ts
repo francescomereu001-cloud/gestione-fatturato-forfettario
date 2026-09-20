@@ -1,5 +1,6 @@
 export type Invoice = {
   id?: string;
+  user_id?: string;
   numero?: string;
   data?: string;
   cliente?: string;
@@ -16,6 +17,7 @@ export type Invoice = {
 
 export type TaxPayment = {
   id?: string;
+  user_id?: string;
   anno: number;
   data?: string;
   descrizione: string;
@@ -25,6 +27,7 @@ export type TaxPayment = {
 
 export type TaxSettings = {
   id?: string;
+  user_id?: string;
   anno: number;
   aliquota_imposta: number;
   coefficiente_redditivita: number;
