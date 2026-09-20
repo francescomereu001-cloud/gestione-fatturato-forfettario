@@ -24,42 +24,11 @@ import {
   CartesianGrid,
 } from "recharts";
 import * as XLSX from "xlsx";
+import { calculateTaxSummary, defaultTaxSettings } from "./domain/calculations/tax";
+import { parseInvoiceWorkbook } from "./import/parsers/invoiceExcel";
 import { supabase, supabaseConfigError } from "./supabase";
+import type { Invoice, TaxPayment, TaxSettings } from "./types/finance";
 import "./App.css";
-
-type Invoice = {
-  id?: string;
-  numero?: string;
-  data?: string;
-  cliente?: string;
-  descrizione?: string;
-  lordo?: number;
-  enasarco?: number;
-  netto?: number;
-  incassata?: boolean;
-  data_incasso?: string;
-  anno?: number;
-  categoria?: string;
-  note?: string;
-};
-
-type TaxPayment = {
-  id?: string;
-  anno: number;
-  data?: string;
-  descrizione: string;
-  importo: number;
-  tipo: string;
-};
-
-type TaxSettings = {
-  id?: string;
-  anno: number;
-  aliquota_imposta: number;
-  coefficiente_redditivita: number;
-  aliquota_inps: number;
-  minimale_inps: number;
-};
 
 const euro = (n: number) =>
   new Intl.NumberFormat("it-IT", {
@@ -69,58 +38,6 @@ const euro = (n: number) =>
 
 const currentYear = new Date().getFullYear();
 
-const defaultSettings = (anno: number): TaxSettings => ({
-  anno,
-  aliquota_imposta: anno <= 2025 ? 5 : 15,
-  coefficiente_redditivita: 78,
-  aliquota_inps: 24.48,
-  minimale_inps: 18808,
-});
-
-const norm = (v: unknown) =>
-  String(v ?? "")
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/\s+/g, " ");
-
-const parseAmount = (v: unknown): number => {
-  if (typeof v === "number") return v;
-  const s = String(v ?? "")
-    .replace(/[€\s]/g, "")
-    .replace(/\./g, "")
-    .replace(",", ".")
-    .replace(/[^\d.-]/g, "");
-  const n = Number(s);
-  return Number.isFinite(n) ? n : 0;
-};
-
-const parseExcelDate = (v: unknown): string | undefined => {
-  if (!v) return undefined;
-
-  if (typeof v === "number") {
-    const d = XLSX.SSF.parse_date_code(v);
-    if (!d) return undefined;
-    return `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
-  }
-
-  if (v instanceof Date && !isNaN(v.getTime())) {
-    return v.toISOString().slice(0, 10);
-  }
-
-  const s = String(v).trim();
-
-  const matchIt = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-  if (matchIt) {
-    return `${matchIt[3]}-${matchIt[2].padStart(2, "0")}-${matchIt[1].padStart(2, "0")}`;
-  }
-
-  const d = new Date(s);
-  if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10);
-
-  return undefined;
-};
 
 export default function App() {
   const navItems: Array<[string, string, LucideIcon]> = [
@@ -196,52 +113,15 @@ export default function App() {
   }, [loadAll]);
 
   const yearSettings =
-    settings.find((s) => s.anno === selectedYear) || defaultSettings(selectedYear);
+    settings.find((s) => s.anno === selectedYear) || defaultTaxSettings(selectedYear);
 
   const invoicesYear = invoices.filter((i) => Number(i.anno) === selectedYear);
   const paymentsYear = payments.filter((p) => Number(p.anno) === selectedYear);
 
-  const stats = useMemo(() => {
-    const fatturato = invoicesYear.reduce((a, i) => a + Number(i.lordo || 0), 0);
-    const enasarco = invoicesYear.reduce((a, i) => a + Number(i.enasarco || 0), 0);
-    const netto = invoicesYear.reduce((a, i) => a + Number(i.netto || 0), 0);
-
-    const incassato = invoicesYear
-      .filter((i) => i.incassata)
-      .reduce((a, i) => a + Number(i.netto || i.lordo || 0), 0);
-
-    const daIncassare = invoicesYear
-      .filter((i) => !i.incassata)
-      .reduce((a, i) => a + Number(i.netto || i.lordo || 0), 0);
-
-    const imponibile = fatturato * (yearSettings.coefficiente_redditivita / 100);
-    const imposta = imponibile * (yearSettings.aliquota_imposta / 100);
-
-    const baseInps = Math.max(imponibile, Number(yearSettings.minimale_inps || 0));
-    const inps = baseInps * (yearSettings.aliquota_inps / 100);
-
-    const tasseTotali = imposta + inps;
-    const pagato = paymentsYear.reduce((a, p) => a + Number(p.importo || 0), 0);
-    const residuo = tasseTotali - pagato;
-    const accantonamentoConsigliato = fatturato > 0 ? (tasseTotali / fatturato) * 100 : 0;
-    const disponibilitaStimata = incassato - tasseTotali;
-
-    return {
-      fatturato,
-      enasarco,
-      netto,
-      incassato,
-      daIncassare,
-      imponibile,
-      imposta,
-      inps,
-      tasseTotali,
-      pagato,
-      residuo,
-      accantonamentoConsigliato,
-      disponibilitaStimata,
-    };
-  }, [invoicesYear, paymentsYear, yearSettings]);
+  const stats = useMemo(
+    () => calculateTaxSummary(invoicesYear, paymentsYear, yearSettings),
+    [invoicesYear, paymentsYear, yearSettings],
+  );
 
   const monthlyData = useMemo(() => {
     const months = Array.from({ length: 12 }, (_, i) => ({
@@ -345,7 +225,7 @@ export default function App() {
         )
       );
     } else {
-      setSettings([...settings, { ...defaultSettings(selectedYear), [field]: value }]);
+      setSettings([...settings, { ...defaultTaxSettings(selectedYear), [field]: value }]);
     }
   };
 
@@ -353,96 +233,7 @@ export default function App() {
     if (!supabase) return;
     const data = await file.arrayBuffer();
     const workbook = XLSX.read(data, { cellDates: true });
-    const rowsToInsert: Invoice[] = [];
-
-    workbook.SheetNames.forEach((sheetName) => {
-      const sheet = workbook.Sheets[sheetName];
-
-      const rows: unknown[][] = XLSX.utils.sheet_to_json(sheet, {
-        header: 1,
-        defval: "",
-        raw: true,
-      });
-
-      const headerRowIndex = rows.findIndex((row) => {
-        const joined = row.map(norm).join(" | ");
-        return (
-          joined.includes("numero") &&
-          joined.includes("cliente") &&
-          (joined.includes("totale documento") ||
-            joined.includes("netto a pagare") ||
-            joined.includes("totale fattura"))
-        );
-      });
-
-      if (headerRowIndex === -1) return;
-
-      const headers = rows[headerRowIndex].map(norm);
-
-      const findCol = (...names: string[]) =>
-        headers.findIndex((h) => names.some((n) => h === norm(n) || h.includes(norm(n))));
-
-      const colNumero = findCol("Numero", "N. fattura", "Numero fattura");
-      const colData = findCol("Data documento", "Data fattura", "Data");
-      const colCliente = findCol("Cliente", "Società", "Societa");
-      const colTipo = findCol("Tipo documento");
-      const colTotaleDocumento = findCol("Totale documento", "Totale fattura");
-      const colNetto = findCol("Netto a pagare", "Netto a pagare (ENASARCO)", "Netto");
-      const colIncassi = findCol("Incassi", "Stato incasso");
-      const colDataIncasso = findCol("Data incasso");
-      const colStato = findCol("Stato");
-      const colDescrizione = findCol("Descrizione del progetto", "Descrizione");
-
-      rows.slice(headerRowIndex + 1).forEach((row) => {
-        const numero = row[colNumero];
-        const cliente = row[colCliente];
-        const tipoDocumento = colTipo >= 0 ? row[colTipo] : "";
-        const descrizione =
-          colDescrizione >= 0 && row[colDescrizione]
-            ? row[colDescrizione]
-            : tipoDocumento || "Fattura elettronica";
-
-        const dataFattura = parseExcelDate(row[colData]);
-        const dataIncasso = colDataIncasso >= 0 ? parseExcelDate(row[colDataIncasso]) : undefined;
-
-        const totaleDocumento =
-          colTotaleDocumento >= 0 ? parseAmount(row[colTotaleDocumento]) : 0;
-
-        const netto =
-          colNetto >= 0 ? parseAmount(row[colNetto]) || totaleDocumento : totaleDocumento;
-
-        const incassi = colIncassi >= 0 ? norm(row[colIncassi]) : "";
-        const stato = colStato >= 0 ? norm(row[colStato]) : "";
-
-        if (!numero || !cliente || !dataFattura) return;
-        if (!totaleDocumento && !netto) return;
-        if (norm(numero).includes("totale")) return;
-
-        const isNotaCredito =
-          norm(tipoDocumento).includes("nota") ||
-          norm(tipoDocumento).includes("td04");
-
-        const sign = isNotaCredito ? -1 : 1;
-
-        const lordoFinale = Math.abs(totaleDocumento || netto) * sign;
-        const nettoFinale = Math.abs(netto || totaleDocumento) * sign;
-
-        rowsToInsert.push({
-          numero: String(numero).trim(),
-          data: dataFattura,
-          cliente: String(cliente).trim(),
-          descrizione: String(descrizione).trim(),
-          lordo: lordoFinale,
-          enasarco: 0,
-          netto: nettoFinale,
-          incassata: incassi.includes("incassat") || stato.includes("incassat"),
-          data_incasso: dataIncasso,
-          anno: new Date(dataFattura).getFullYear(),
-          categoria: isNotaCredito ? "Nota di credito" : "Import portale FE",
-          note: `Import da file: ${file.name}`,
-        });
-      });
-    });
+    const rowsToInsert = parseInvoiceWorkbook(workbook, file.name);
 
     if (!rowsToInsert.length) {
       alert("Nessuna fattura valida trovata. Il formato del file non è stato riconosciuto.");
