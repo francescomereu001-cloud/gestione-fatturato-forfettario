@@ -126,7 +126,8 @@ nav button:hover {
 }
 
 select,
-input {
+input,
+textarea {
   width: 100%;
   border: 1px solid rgba(148, 163, 184, 0.25);
   background: rgba(15, 23, 42, 0.95);
@@ -135,6 +136,16 @@ input {
   border-radius: 14px;
   outline: none;
 }
+
+.check { display: flex; align-items: center; gap: 8px; color: #cbd5e1; }
+.check input { width: auto; }
+.filterBar { display: flex; gap: 12px; margin-bottom: 14px; }
+.filterBar select { max-width: 260px; }
+.ledgerTable { display: grid; gap: 8px; }
+.ledgerRow { display: grid; grid-template-columns: 1.3fr 1fr 1fr 1fr 1.4fr; gap: 12px; align-items: center; padding: 13px 14px; border-radius: 14px; background: rgba(30, 41, 59, 0.68); }
+.ledgerRow.transaction { grid-template-columns: 110px 1.5fr 1fr 110px 100px 150px; }
+.ledgerRow small { display: block; color: #94a3b8; margin-top: 4px; }
+.primary:disabled { opacity: .5; cursor: not-allowed; }
 
 .main {
   flex: 1;
@@ -355,7 +366,9 @@ input {
   }
 
   .thead,
-  .tr {
+  .tr,
+  .ledgerRow,
+  .ledgerRow.transaction {
     grid-template-columns: 1fr;
   }
 }

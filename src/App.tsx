@@ -11,6 +11,8 @@ import {
   Trash2,
   Save,
   Wallet,
+  Landmark,
+  ArrowLeftRight,
   AlertTriangle,
   BarChart3,
 } from "lucide-react";
@@ -30,6 +32,7 @@ import { ownedBy, sessionGateState } from "./auth/ownership";
 import { parseInvoiceWorkbook } from "./import/parsers/invoiceExcel";
 import { supabase, supabaseConfigError } from "./supabase";
 import type { Invoice, TaxPayment, TaxSettings } from "./types/finance";
+import { AccountsPage, TransactionsPage } from "./components/LedgerPages";
 import "./App.css";
 
 const euro = (n: number) =>
@@ -112,6 +115,8 @@ function AuthStatus({ message }: { message: string }) {
 function PrivateApp({ session }: { session: Session }) {
   const navItems: Array<[string, string, LucideIcon]> = [
     ["dashboard", "Dashboard", BarChart3],
+    ["accounts", "Accounts", Landmark],
+    ["transactions", "Transactions", ArrowLeftRight],
     ["fatture", "Fatture", Receipt],
     ["fiscale", "Fiscale", PiggyBank],
     ["pagamenti", "F24 / Pagamenti", Wallet],
@@ -435,6 +440,9 @@ function PrivateApp({ session }: { session: Session }) {
             </section>
           </>
         )}
+
+        {activeTab === "accounts" && supabase && <AccountsPage client={supabase} userId={session.user.id} />}
+        {activeTab === "transactions" && supabase && <TransactionsPage client={supabase} userId={session.user.id} />}
 
         {activeTab === "fatture" && (
           <section className="panel">
