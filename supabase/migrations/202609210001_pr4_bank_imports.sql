@@ -118,27 +118,98 @@ begin
   return new;
 end $$;
 
--- The two legs must be linked atomically; the function remains conservative and owner-scoped.
-create function public.link_internal_transfer(first_transaction_id uuid, second_transaction_id uuid)
-returns uuid language plpgsql set search_path = '' as $$
-declare first_row public.transactions; second_row public.transactions; group_id uuid := gen_random_uuid();
+-- Commit every ready row in one PostgreSQL call. Any exception rolls back inserts,
+-- staging changes and counters together.
+create function public.commit_import_batch(target_batch_id uuid)
+returns integer language plpgsql security invoker set search_path = '' as $$
+declare
+  owned_batch public.import_batches;
+  ready_row public.import_rows;
+  inserted_id uuid;
+  imported_total integer := 0;
+  final_amount numeric;
 begin
+  select * into owned_batch from public.import_batches
+    where id = target_batch_id and user_id = auth.uid() for update;
+  if owned_batch.id is null then raise exception 'import batch not found'; end if;
+  if owned_batch.status <> 'preview' then raise exception 'import batch is not commit-ready'; end if;
+  perform 1 from public.import_rows where batch_id = owned_batch.id and user_id = auth.uid() for update;
+
+  -- Validate the complete ready set before writing the first transaction.
+  if exists (select 1 from public.import_rows where batch_id = owned_batch.id and user_id = auth.uid() and status = 'ready'
+    and (transaction_date is null or amount is null or amount = 0 or nullif(btrim(description), '') is null
+      or suggested_transaction_type is null
+      or suggested_transaction_type not in ('unclassified','income','expense','internal_transfer','investment_transfer','debt_principal','debt_interest','refund','adjustment')))
+    then raise exception 'one or more ready rows are invalid'; end if;
+  if exists (select 1 from public.import_rows r where r.batch_id = owned_batch.id and r.user_id = auth.uid() and r.status = 'ready'
+    and r.suggested_category_id is not null and not exists
+      (select 1 from public.transaction_categories c where c.id = r.suggested_category_id and c.user_id = auth.uid()))
+    then raise exception 'one or more categories do not belong to batch owner'; end if;
+
+  for ready_row in select * from public.import_rows
+    where batch_id = owned_batch.id and user_id = auth.uid() and status = 'ready'
+    order by row_index for update
+  loop
+    final_amount := case
+      when ready_row.suggested_transaction_type in ('income', 'refund') then abs(ready_row.amount)
+      when ready_row.suggested_transaction_type in ('expense', 'debt_interest', 'debt_principal') then -abs(ready_row.amount)
+      else ready_row.amount
+    end;
+    insert into public.transactions (
+      user_id, account_id, transaction_date, booking_date, amount, description, merchant,
+      category_id, transaction_type, source, external_id, reconciliation_status, import_batch_id
+    ) values (
+      auth.uid(), owned_batch.account_id, ready_row.transaction_date, ready_row.booking_date,
+      final_amount, btrim(ready_row.description), ready_row.merchant, ready_row.suggested_category_id,
+      ready_row.suggested_transaction_type, 'bank_import', ready_row.external_id, 'pending', owned_batch.id
+    ) returning id into inserted_id;
+    update public.import_rows set status = 'imported', matched_transaction_id = inserted_id
+      where id = ready_row.id and user_id = auth.uid();
+    imported_total := imported_total + 1;
+  end loop;
+
+  update public.import_batches set
+    status = 'completed', completed_at = now(),
+    imported_count = (select count(*) from public.import_rows where batch_id = owned_batch.id and status = 'imported'),
+    duplicate_count = (select count(*) from public.import_rows where batch_id = owned_batch.id and status = 'duplicate'),
+    ignored_count = (select count(*) from public.import_rows where batch_id = owned_batch.id and status = 'ignored'),
+    error_count = (select count(*) from public.import_rows where batch_id = owned_batch.id and status = 'error')
+    where id = owned_batch.id and user_id = auth.uid();
+  return imported_total;
+end $$;
+revoke all on function public.commit_import_batch(uuid) from public, anon;
+grant execute on function public.commit_import_batch(uuid) to authenticated;
+
+-- Link only an unlinked, active, owner-scoped and exact opposite pair.
+create function public.link_transfer(first_transaction_id uuid, second_transaction_id uuid, target_type text)
+returns uuid language plpgsql security invoker set search_path = '' as $$
+declare
+  first_row public.transactions; second_row public.transactions; group_id uuid := gen_random_uuid();
+  first_account_type text; second_account_type text;
+begin
+  if target_type not in ('internal_transfer', 'investment_transfer') then raise exception 'invalid transfer type'; end if;
   select * into first_row from public.transactions where id = first_transaction_id and user_id = auth.uid() for update;
   select * into second_row from public.transactions where id = second_transaction_id and user_id = auth.uid() for update;
   if first_row.id is null or second_row.id is null then raise exception 'transactions not found'; end if;
-  if first_row.account_id = second_row.account_id
-    or first_row.amount <> -second_row.amount
+  if first_row.account_id = second_row.account_id or first_row.amount <> -second_row.amount
     or abs(first_row.transaction_date - second_row.transaction_date) > 3
-    or first_row.transaction_type <> 'unclassified'
-    or second_row.transaction_type <> 'unclassified'
+    or first_row.reconciliation_status = 'ignored' or second_row.reconciliation_status = 'ignored'
+    or first_row.transfer_group_id is not null or second_row.transfer_group_id is not null
+    or first_row.transaction_type <> 'unclassified' or second_row.transaction_type <> 'unclassified'
     then raise exception 'transactions are not a conservative transfer match'; end if;
-  update public.transactions set transaction_type = 'internal_transfer', transfer_account_id = second_row.account_id,
-    transfer_group_id = group_id, reconciliation_status = 'confirmed' where id = first_row.id;
-  update public.transactions set transaction_type = 'internal_transfer', transfer_account_id = first_row.account_id,
-    transfer_group_id = group_id, reconciliation_status = 'confirmed' where id = second_row.id;
+  select account_type into first_account_type from public.accounts where id = first_row.account_id and user_id = auth.uid();
+  select account_type into second_account_type from public.accounts where id = second_row.account_id and user_id = auth.uid();
+  if target_type = 'investment_transfer' and ((first_account_type = 'broker') = (second_account_type = 'broker'))
+    then raise exception 'investment transfer requires exactly one broker account'; end if;
+  if target_type = 'internal_transfer' and (first_account_type = 'broker' or second_account_type = 'broker')
+    then raise exception 'broker pairs must use investment_transfer'; end if;
+  update public.transactions set transaction_type = target_type, transfer_account_id = second_row.account_id,
+    transfer_group_id = group_id, reconciliation_status = 'confirmed' where id = first_row.id and user_id = auth.uid();
+  update public.transactions set transaction_type = target_type, transfer_account_id = first_row.account_id,
+    transfer_group_id = group_id, reconciliation_status = 'confirmed' where id = second_row.id and user_id = auth.uid();
   return group_id;
 end $$;
-revoke all on function public.link_internal_transfer(uuid, uuid) from public, anon;
-grant execute on function public.link_internal_transfer(uuid, uuid) to authenticated;
+revoke all on function public.link_transfer(uuid, uuid, text) from public, anon;
+grant execute on function public.link_transfer(uuid, uuid, text) to authenticated;
 
 commit;

@@ -1,17 +1,35 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { ImportBatch, ImportRow } from "../types/imports.ts";
-import type { LedgerTransaction } from "../types/ledger.ts";
+import type { ImportRow } from "../types/imports.ts";
+import type { AccountType, LedgerTransaction } from "../types/ledger.ts";
 
 export async function sha256(data: ArrayBuffer): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-export function possibleTransfer(transaction: Pick<LedgerTransaction, "account_id" | "transaction_date" | "amount">, candidates: LedgerTransaction[]) {
+export function possibleTransfer(transaction: LedgerTransaction, candidates: LedgerTransaction[]) {
   const day = Date.parse(`${transaction.transaction_date}T00:00:00Z`);
-  return candidates.filter((candidate) => candidate.account_id !== transaction.account_id
+  if (transaction.reconciliation_status === "ignored" || transaction.transfer_group_id
+    || ["internal_transfer", "investment_transfer"].includes(transaction.transaction_type)) return [];
+  return candidates.filter((candidate) => candidate.id !== transaction.id
+    && Boolean(transaction.user_id) && candidate.user_id === transaction.user_id
+    && candidate.account_id !== transaction.account_id
     && Number(candidate.amount) === -Number(transaction.amount)
-    && Math.abs(Date.parse(`${candidate.transaction_date}T00:00:00Z`) - day) <= 3 * 86_400_000);
+    && Math.abs(Date.parse(`${candidate.transaction_date}T00:00:00Z`) - day) <= 3 * 86_400_000
+    && candidate.reconciliation_status !== "ignored"
+    && !candidate.transfer_group_id
+    && !["internal_transfer", "investment_transfer"].includes(candidate.transaction_type)
+    && candidate.transaction_type === "unclassified");
+}
+
+export function transferTypeForAccounts(first: AccountType, second: AccountType): "internal_transfer" | "investment_transfer" {
+  return first === "broker" || second === "broker" ? "investment_transfer" : "internal_transfer";
+}
+
+export function classifyDuplicate(row: ImportRow, externalIds: Set<string>, fingerprints: Set<string>): ImportRow["status"] {
+  if (row.external_id && externalIds.has(row.external_id)) return "duplicate";
+  if (row.dedupe_fingerprint && fingerprints.has(row.dedupe_fingerprint)) return "possible_duplicate";
+  return row.status;
 }
 
 export async function createImportPreview(
@@ -38,37 +56,29 @@ export async function createImportPreview(
   if (existingTransactions.error || previousRows.error) throw existingTransactions.error ?? previousRows.error;
   const duplicateIds = new Set((existingTransactions.data ?? []).map((row) => row.external_id));
   const duplicateFingerprints = new Set((previousRows.data ?? []).map((row) => row.dedupe_fingerprint));
-  const seen = new Set<string>();
+  const seenExternalIds = new Set<string>(duplicateIds);
+  const seen = new Set<string>(duplicateFingerprints);
   const staged = rows.map((row) => {
-    const duplicate = Boolean((row.external_id && duplicateIds.has(row.external_id))
-      || (row.dedupe_fingerprint && (duplicateFingerprints.has(row.dedupe_fingerprint) || seen.has(row.dedupe_fingerprint))));
+    const status = classifyDuplicate(row, seenExternalIds, seen);
+    if (row.external_id) seenExternalIds.add(row.external_id);
     if (row.dedupe_fingerprint) seen.add(row.dedupe_fingerprint);
-    return { ...row, user_id: userId, batch_id: batch.id, status: duplicate && row.status === "ready" ? "possible_duplicate" : row.status };
+    return { ...row, user_id: userId, batch_id: batch.id, status };
   });
   if (staged.length) {
     const { error } = await client.from("import_rows").insert(staged);
     if (error) { await client.from("import_batches").update({ status: "failed", notes: error.message }).eq("id", batch.id).eq("user_id", userId); throw error; }
   }
+  const { error: counterError } = await client.from("import_batches").update({
+    duplicate_count: staged.filter((row) => row.status === "duplicate").length,
+    ignored_count: staged.filter((row) => row.status === "ignored").length,
+    error_count: staged.filter((row) => row.status === "error").length,
+  }).eq("id", batch.id).eq("user_id", userId);
+  if (counterError) throw counterError;
   return batch.id;
 }
 
-export async function importReadyRows(client: SupabaseClient, userId: string, batch: ImportBatch, rows: ImportRow[]) {
-  const ready = rows.filter((row) => row.status === "ready");
-  await client.from("import_batches").update({ status: "processing" }).eq("id", batch.id).eq("user_id", userId);
-  let imported = 0; let errors = 0;
-  for (const row of ready) {
-    const { data, error } = await client.from("transactions").insert({
-      user_id: userId, account_id: batch.account_id, transaction_date: row.transaction_date,
-      booking_date: row.booking_date, amount: row.amount, description: row.description,
-      merchant: row.merchant, transaction_type: row.suggested_transaction_type ?? "unclassified",
-      category_id: row.suggested_category_id, source: "bank_import", external_id: row.external_id,
-      reconciliation_status: "pending", import_batch_id: batch.id,
-    }).select("id").single();
-    if (error || !data) { errors += 1; await client.from("import_rows").update({ status: "error" }).eq("id", row.id).eq("user_id", userId); }
-    else { imported += 1; await client.from("import_rows").update({ status: "imported", matched_transaction_id: data.id }).eq("id", row.id).eq("user_id", userId); }
-  }
-  const duplicate_count = rows.filter((row) => row.status === "duplicate" || row.status === "possible_duplicate").length;
-  const ignored_count = rows.filter((row) => row.status === "ignored").length;
-  await client.from("import_batches").update({ status: errors ? "failed" : "completed", imported_count: imported, duplicate_count, ignored_count, error_count: errors + rows.filter((row) => row.status === "error").length, completed_at: new Date().toISOString() }).eq("id", batch.id).eq("user_id", userId);
-  return { imported, errors };
+export async function commitImportBatch(client: SupabaseClient, batchId: string): Promise<number> {
+  const { data, error } = await client.rpc("commit_import_batch", { target_batch_id: batchId });
+  if (error) throw error;
+  return Number(data ?? 0);
 }

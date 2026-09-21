@@ -1,8 +1,13 @@
 import * as XLSX from "xlsx";
 import type { ImportRow } from "../../types/imports.ts";
 
-type RawRow = Record<string, unknown>;
-const aliases = {
+export type RawBankRow = Record<string, unknown>;
+export const mappingFields = ["transaction_date", "booking_date", "amount", "debit", "credit", "description", "merchant", "external_id"] as const;
+export type MappingField = (typeof mappingFields)[number];
+export type ColumnMapping = Partial<Record<MappingField, string>>;
+export type ReadBankFile = { headers: string[]; rows: RawBankRow[] };
+
+const aliases: Record<MappingField, readonly string[]> = {
   transaction_date: ["data", "data operazione", "transaction date", "date", "valuta"],
   booking_date: ["data contabile", "booking date", "data registrazione"],
   amount: ["importo", "amount", "ammontare", "valore"],
@@ -11,12 +16,17 @@ const aliases = {
   description: ["descrizione", "causale", "description", "operazione"],
   merchant: ["beneficiario", "ordinante", "merchant", "controparte"],
   external_id: ["id", "id operazione", "transaction id", "numero operazione", "riferimento"],
-} as const;
+};
 
 const normalizedKey = (value: string) => value.trim().toLocaleLowerCase("it-IT").replace(/\s+/g, " ");
-function get(row: RawRow, names: readonly string[]) {
-  const key = Object.keys(row).find((candidate) => names.includes(normalizedKey(candidate)));
-  return key ? row[key] : undefined;
+export function detectHeaders(rows: RawBankRow[]): string[] {
+  return Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
+}
+export function suggestColumnMapping(headers: string[]): ColumnMapping {
+  return Object.fromEntries(mappingFields.flatMap((field) => {
+    const header = headers.find((candidate) => aliases[field].includes(normalizedKey(candidate)));
+    return header ? [[field, header]] : [];
+  })) as ColumnMapping;
 }
 
 export function normalizeDate(value: unknown): string | null {
@@ -34,11 +44,15 @@ export function normalizeDate(value: unknown): string | null {
 
 export function normalizeAmount(value: unknown): number | null {
   if (typeof value === "number") return Number.isFinite(value) && value !== 0 ? value : null;
-  let text = String(value ?? "").trim().replace(/[€\s]/g, "");
+  let text = String(value ?? "").trim().replace(/[^\d.,()\-+]/g, "");
   if (!text) return null;
-  const negative = /^-/.test(text) || /^\(.*\)$/.test(text);
-  text = text.replace(/[()-]/g, "");
-  if (text.includes(",")) text = text.replace(/\./g, "").replace(",", ".");
+  const negative = text.startsWith("-") || (text.startsWith("(") && text.endsWith(")"));
+  text = text.replace(/[()+-]/g, "");
+  const comma = text.lastIndexOf(","); const dot = text.lastIndexOf(".");
+  if (comma >= 0 && dot >= 0) {
+    const decimal = comma > dot ? "," : "."; const thousands = decimal === "," ? "." : ",";
+    text = text.split(thousands).join("").replace(decimal, ".");
+  } else if (comma >= 0) text = text.replace(/,/g, ".");
   const amount = Number(text);
   return Number.isFinite(amount) && amount !== 0 ? (negative ? -amount : amount) : null;
 }
@@ -50,18 +64,19 @@ export function fingerprint(row: Pick<ImportRow, "transaction_date" | "amount" |
   return `v1-${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
 
-export function normalizeBankRows(rows: RawRow[]): ImportRow[] {
-  return rows.filter((row) => Object.values(row).some((value) => String(value ?? "").trim())).map((raw_data, row_index) => {
-    const direct = normalizeAmount(get(raw_data, aliases.amount));
-    const credit = normalizeAmount(get(raw_data, aliases.credit));
-    const debit = normalizeAmount(get(raw_data, aliases.debit));
+export function normalizeBankRows(rows: RawBankRow[], mapping: ColumnMapping): ImportRow[] {
+  const value = (row: RawBankRow, field: MappingField) => mapping[field] ? row[mapping[field]!] : undefined;
+  return rows.filter((row) => Object.values(row).some((item) => String(item ?? "").trim())).map((raw_data, row_index) => {
+    const direct = normalizeAmount(value(raw_data, "amount"));
+    const credit = normalizeAmount(value(raw_data, "credit"));
+    const debit = normalizeAmount(value(raw_data, "debit"));
     const amount = direct ?? (credit ? Math.abs(credit) : debit ? -Math.abs(debit) : null);
-    const transaction_date = normalizeDate(get(raw_data, aliases.transaction_date));
-    const description = String(get(raw_data, aliases.description) ?? "").trim() || null;
+    const transaction_date = normalizeDate(value(raw_data, "transaction_date"));
+    const description = String(value(raw_data, "description") ?? "").trim() || null;
     const row: ImportRow = {
-      row_index, transaction_date, booking_date: normalizeDate(get(raw_data, aliases.booking_date)), amount,
-      description, merchant: String(get(raw_data, aliases.merchant) ?? "").trim() || null,
-      external_id: String(get(raw_data, aliases.external_id) ?? "").trim() || null,
+      row_index, transaction_date, booking_date: normalizeDate(value(raw_data, "booking_date")), amount,
+      description, merchant: String(value(raw_data, "merchant") ?? "").trim() || null,
+      external_id: String(value(raw_data, "external_id") ?? "").trim() || null,
       dedupe_fingerprint: null, suggested_transaction_type: "unclassified", suggested_category_id: null,
       status: transaction_date && amount && description ? "ready" : "error", raw_data,
     };
@@ -82,15 +97,21 @@ function parseCsvLine(line: string, delimiter: string): string[] {
   cells.push(cell); return cells;
 }
 
-export function parseBankCsv(text: string): ImportRow[] {
+export function readCsv(text: string): ReadBankFile {
   const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/).filter((line) => line.trim());
-  if (!lines.length) return [];
+  if (!lines.length) return { headers: [], rows: [] };
   const delimiter = (lines[0].match(/;/g)?.length ?? 0) >= (lines[0].match(/,/g)?.length ?? 0) ? ";" : ",";
-  const headers = parseCsvLine(lines[0], delimiter);
-  return normalizeBankRows(lines.slice(1).map((line) => Object.fromEntries(parseCsvLine(line, delimiter).map((value, index) => [headers[index] ?? `column_${index}`, value]))));
+  const headers = parseCsvLine(lines[0], delimiter).map((header) => header.trim());
+  const rows = lines.slice(1).map((line) => Object.fromEntries(parseCsvLine(line, delimiter).map((cell, index) => [headers[index] ?? `column_${index}`, cell])));
+  return { headers, rows };
 }
 
-export function parseBankWorkbook(workbook: XLSX.WorkBook): ImportRow[] {
+export function readWorkbook(workbook: XLSX.WorkBook): ReadBankFile {
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
-  return sheet ? normalizeBankRows(XLSX.utils.sheet_to_json<RawRow>(sheet, { raw: true, defval: "" })) : [];
+  const rows = sheet ? XLSX.utils.sheet_to_json<RawBankRow>(sheet, { raw: true, defval: "" }) : [];
+  return { headers: detectHeaders(rows), rows };
 }
+
+// Compatibility helpers for callers that accept automatic mapping.
+export function parseBankCsv(text: string): ImportRow[] { const read = readCsv(text); return normalizeBankRows(read.rows, suggestColumnMapping(read.headers)); }
+export function parseBankWorkbook(workbook: XLSX.WorkBook): ImportRow[] { const read = readWorkbook(workbook); return normalizeBankRows(read.rows, suggestColumnMapping(read.headers)); }
