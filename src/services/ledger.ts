@@ -37,7 +37,7 @@ export function normalizeTransactionAmount(transaction: LedgerTransaction): numb
 }
 
 export function transactionPayload(transaction: LedgerTransaction, userId: string) {
-  return ownedBy({ ...transaction, amount: normalizeTransactionAmount(transaction), source: "manual" }, userId);
+  return ownedBy({ ...transaction, amount: normalizeTransactionAmount(transaction), source: transaction.source || "manual" }, userId);
 }
 
 export function internalTransferPayloads(transaction: LedgerTransaction, userId: string, groupId: string = crypto.randomUUID()) {

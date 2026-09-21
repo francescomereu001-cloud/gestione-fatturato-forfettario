@@ -146,6 +146,12 @@ textarea {
 .ledgerRow.transaction { grid-template-columns: 110px 1.5fr 1fr 110px 100px 150px; }
 .ledgerRow small { display: block; color: #94a3b8; margin-top: 4px; }
 .primary:disabled { opacity: .5; cursor: not-allowed; }
+.importSummary { display: flex; flex-wrap: wrap; gap: 18px; margin: 22px 0 12px; color: #cbd5e1; }
+.importTable { display: grid; gap: 8px; overflow-x: auto; }
+.importRow { min-width: 1050px; display: grid; grid-template-columns: 140px minmax(220px, 1fr) 120px 170px 180px 150px; gap: 8px; align-items: center; padding: 10px; border-radius: 14px; background: rgba(30, 41, 59, .68); }
+.importRow.status-possible_duplicate { border: 1px solid rgba(250, 204, 21, .55); }
+.importRow.status-error { border: 1px solid rgba(248, 113, 113, .55); }
+.importRow small { display: block; margin-top: 4px; color: #94a3b8; }
 
 .main {
   flex: 1;
@@ -372,3 +378,7 @@ textarea {
     grid-template-columns: 1fr;
   }
 }
+.mappingPanel { margin-top: 20px; padding: 20px; border: 1px solid rgba(148, 163, 184, .25); border-radius: 18px; }
+.historyTable { display: grid; gap: 8px; overflow-x: auto; }
+.historyRow { min-width: 1050px; display: grid; grid-template-columns: 1.5fr 1.2fr repeat(6, .75fr) auto; gap: 10px; align-items: center; padding: 12px; border-radius: 14px; background: rgba(30, 41, 59, .68); }
+.historyRow small { display: block; color: #94a3b8; margin-top: 4px; }
