@@ -33,6 +33,7 @@ import { parseInvoiceWorkbook } from "./import/parsers/invoiceExcel";
 import { supabase, supabaseConfigError } from "./supabase";
 import type { Invoice, TaxPayment, TaxSettings } from "./types/finance";
 import { AccountsPage, TransactionsPage } from "./components/LedgerPages";
+import { BankImportPage } from "./components/BankImportPage";
 import "./App.css";
 
 const euro = (n: number) =>
@@ -117,10 +118,11 @@ function PrivateApp({ session }: { session: Session }) {
     ["dashboard", "Dashboard", BarChart3],
     ["accounts", "Accounts", Landmark],
     ["transactions", "Transactions", ArrowLeftRight],
+    ["bank-import", "Import banca", Upload],
     ["fatture", "Fatture", Receipt],
     ["fiscale", "Fiscale", PiggyBank],
     ["pagamenti", "F24 / Pagamenti", Wallet],
-    ["import", "Import Excel", Upload],
+    ["import", "Import fatture Excel", Upload],
   ];
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [payments, setPayments] = useState<TaxPayment[]>([]);
@@ -443,6 +445,7 @@ function PrivateApp({ session }: { session: Session }) {
 
         {activeTab === "accounts" && supabase && <AccountsPage client={supabase} userId={session.user.id} />}
         {activeTab === "transactions" && supabase && <TransactionsPage client={supabase} userId={session.user.id} />}
+        {activeTab === "bank-import" && supabase && <BankImportPage client={supabase} userId={session.user.id} />}
 
         {activeTab === "fatture" && (
           <section className="panel">
