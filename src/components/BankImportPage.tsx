@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Upload } from "lucide-react";
 import * as XLSX from "xlsx";
-import { fingerprint, mappingFields, normalizeBankRows, readCsv, readWorkbook, suggestColumnMapping, type ColumnMapping, type ReadBankFile } from "../import/parsers/bankStatement";
+import { fingerprint, mappingFields, normalizeBankRows, readCsv, suggestColumnMapping, type ColumnMapping, type ReadBankFile } from "../import/parsers/bankStatement";
+import { detectBankImport, type BankImportDetection } from "../import/parsers/bankImportRegistry";
 import { commitImportBatch, createImportPreview } from "../services/bankImports";
 import type { ImportBatch, ImportRow, ImportRowStatus } from "../types/imports";
 import { transactionTypes, type Account, type TransactionCategory, type TransactionType } from "../types/ledger";
@@ -12,7 +13,7 @@ const mappingLabels: Record<(typeof mappingFields)[number], string> = {
   debit: "Addebito", credit: "Accredito", description: "Descrizione", merchant: "Controparte", external_id: "ID esterno",
 };
 
-type PendingFile = { file: File; data: ArrayBuffer; read: ReadBankFile };
+type PendingFile = { file: File; data: ArrayBuffer; read: ReadBankFile; detection: BankImportDetection };
 
 export function BankImportPage({ client, userId }: { client: SupabaseClient; userId: string }) {
   const [accounts, setAccounts] = useState<Account[]>([]); const [categories, setCategories] = useState<TransactionCategory[]>([]);
@@ -40,22 +41,26 @@ export function BankImportPage({ client, userId }: { client: SupabaseClient; use
   ]).then(([accountResult, categoryResult, historyResult]) => { setAccounts((accountResult.data ?? []) as Account[]); setCategories((categoryResult.data ?? []) as TransactionCategory[]); setHistory((historyResult.data ?? []) as ImportBatch[]); }); }, [client, userId]);
 
   const readFile = async (file: File) => {
-    if (!accountId) { setMessage("Seleziona prima il conto dell’estratto."); return; }
     setBusy(true); setMessage("");
     try {
       const data = await file.arrayBuffer(); const lower = file.name.toLocaleLowerCase();
       if (!lower.endsWith(".csv") && !lower.endsWith(".xlsx")) throw new Error("Formato non supportato: usa CSV o XLSX.");
-      const read = lower.endsWith(".csv") ? readCsv(new TextDecoder().decode(data)) : readWorkbook(XLSX.read(data, { cellDates: true }));
-      if (!read.rows.length) throw new Error("Il file non contiene righe leggibili.");
-      setPending({ file, data, read }); setMapping(suggestColumnMapping(read.headers));
+      const detection = lower.endsWith(".csv")
+        ? (() => { const read = readCsv(new TextDecoder().decode(data)); return { parserKey: "generic_bank_v1", providerLabel: "Formato generico CSV", compatibleAccountType: null, rows: normalizeBankRows(read.rows, suggestColumnMapping(read.headers)), read, generic: true } satisfies BankImportDetection; })()
+        : detectBankImport(XLSX.read(data, { cellDates: true }));
+      const read = detection.read;
+      if (!(detection.rows.length || read.rows.length)) throw new Error("Il file non contiene righe leggibili.");
+      setPending({ file, data, read, detection }); setMapping(suggestColumnMapping(read.headers)); setAccountId("");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Lettura non riuscita."); }
     finally { setBusy(false); }
   };
   const createPreview = async () => {
-    if (!pending) return; setBusy(true);
+    if (!pending || !accountId) return; setBusy(true);
     try {
-      const parsed = normalizeBankRows(pending.read.rows, mapping);
-      const batchId = await createImportPreview(client, userId, accountId, pending.file, parsed, pending.data);
+      const selectedAccount = accounts.find((account) => account.id === accountId);
+      if (pending.detection.compatibleAccountType && selectedAccount?.account_type !== pending.detection.compatibleAccountType) throw new Error("Il conto selezionato non è compatibile con questo provider.");
+      const parsed = pending.detection.generic ? normalizeBankRows(pending.read.rows, mapping) : pending.detection.rows;
+      const batchId = await createImportPreview(client, userId, accountId, pending.file, parsed, pending.data, pending.detection.parserKey);
       setPending(null); await loadBatch(batchId); await loadHistory(); setMessage("Previsualizzazione creata. Controlla le righe prima di importare.");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Import non riuscito."); }
     finally { setBusy(false); }
@@ -73,6 +78,10 @@ export function BankImportPage({ client, userId }: { client: SupabaseClient; use
   const runImport = async () => {
     if (!batch) return; setBusy(true);
     try {
+      const selectedAccount = accounts.find((account) => account.id === batch.account_id);
+      if (selectedAccount && Number(selectedAccount.opening_balance) !== 0 && !selectedAccount.balance_as_of) {
+        throw new Error("Definisci la data a cui si riferisce il saldo iniziale del conto prima di importare movimenti, altrimenti il saldo verrebbe conteggiato due volte.");
+      }
       // Recompute and persist from the displayed canonical values before the atomic DB commit.
       const canonical = rows.filter((row) => row.id && row.status === "ready").map((row) => ({ id: row.id!, dedupe_fingerprint: fingerprint(row) }));
       for (const item of canonical) {
@@ -87,9 +96,12 @@ export function BankImportPage({ client, userId }: { client: SupabaseClient; use
   const counts = rows.reduce<Record<string, number>>((result, row) => ({ ...result, [row.status]: (result[row.status] ?? 0) + 1 }), {});
 
   return <section className="panel"><h3>Import movimenti bancari</h3><p className="muted">CSV e XLSX vengono mappati e normalizzati in staging. Il commit del batch è atomico.</p>
-    {!batch && <div className="formGrid compact"><label className="field">Conto<select value={accountId} disabled={Boolean(pending)} onChange={event => setAccountId(event.target.value)}><option value="">Seleziona conto</option>{accounts.map(account => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label></div>}
     {!batch && !pending && <label className="uploadBox"><Upload size={32}/><strong>{busy ? "Lettura…" : "Carica estratto conto"}</strong><span>.csv / .xlsx</span><input type="file" accept=".csv,.xlsx" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void readFile(file); }}/></label>}
-    {pending && <div className="mappingPanel"><h4>Mappa le colonne di {pending.file.name}</h4><div className="formGrid">{mappingFields.map(field => <label className="field" key={field}>{mappingLabels[field]}<select value={mapping[field] ?? ""} onChange={event => setMapping({ ...mapping, [field]: event.target.value || undefined })}><option value="">Non mappata</option>{pending.read.headers.map(header => <option key={header}>{header}</option>)}</select></label>)}</div><button className="primary" disabled={busy || !mapping.transaction_date || !mapping.description || (!mapping.amount && !mapping.debit && !mapping.credit)} onClick={() => void createPreview()}>Crea preview</button> <button className="ghost" onClick={reset}>Annulla</button></div>}
+    {pending && <div className="mappingPanel"><h4>{pending.file.name}</h4><div className="importSummary"><span>Provider: <b>{pending.detection.providerLabel}</b></span><span>Parser: <code>{pending.detection.parserKey}</code></span><span>{pending.detection.generic ? pending.read.rows.length : pending.detection.rows.length} righe riconosciute</span></div>
+      <label className="field">Conto<select value={accountId} onChange={event => setAccountId(event.target.value)}><option value="">Seleziona conto</option>{accounts.filter(account => !pending.detection.compatibleAccountType || account.account_type === pending.detection.compatibleAccountType).map(account => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>
+      {pending.detection.compatibleAccountType && !accounts.some(account => account.account_type === pending.detection.compatibleAccountType) && <div className="notice">Per importare questo file crea prima il relativo conto/carta nella sezione Accounts.</div>}
+      {pending.detection.generic && <><h4>Mappa le colonne</h4><div className="formGrid">{mappingFields.map(field => <label className="field" key={field}>{mappingLabels[field]}<select value={mapping[field] ?? ""} onChange={event => setMapping({ ...mapping, [field]: event.target.value || undefined })}><option value="">Non mappata</option>{pending.read.headers.map(header => <option key={header}>{header}</option>)}</select></label>)}</div></>}
+      <button className="primary" disabled={busy || !accountId || (pending.detection.generic && (!mapping.transaction_date || !mapping.description || (!mapping.amount && !mapping.debit && !mapping.credit)))} onClick={() => void createPreview()}>Crea preview</button> <button className="ghost" onClick={reset}>Annulla</button></div>}
     {message && <div className="notice">{message}</div>}
     {batch && <><div className="importSummary"><b>{batch.filename}</b><span>Pronte: {counts.ready ?? 0}</span><span>Possibili duplicati: {counts.possible_duplicate ?? 0}</span><span>Duplicati: {counts.duplicate ?? 0}</span><span>Errori: {counts.error ?? 0}</span></div>
       <div className="importTable">{rows.map(row => <div className={`importRow status-${row.status}`} key={row.id ?? row.row_index}>
@@ -100,7 +112,8 @@ export function BankImportPage({ client, userId }: { client: SupabaseClient; use
         <select value={row.suggested_category_id ?? ""} disabled={batch.status !== "preview" || row.status === "imported" || row.status === "duplicate"} onChange={event => void updateRow(row, { suggested_category_id: event.target.value || null })}><option value="">Nessuna categoria</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select>
         <select value={row.status} disabled={batch.status !== "preview" || row.status === "imported" || row.status === "error" || row.status === "duplicate"} onChange={event => void updateRow(row, { status: event.target.value as ImportRowStatus })}><option value="ready">Importa</option><option value="duplicate">Duplicato</option><option value="ignored">Ignora</option>{row.status === "possible_duplicate" && <option value="possible_duplicate">Da verificare</option>}<option value="imported" disabled>Importato</option><option value="error" disabled>Errore</option></select>
       </div>)}</div>
-      {batch.status === "preview" ? <button className="primary mt" disabled={busy || !(counts.ready > 0)} onClick={() => void runImport()}>Importa atomicamente {counts.ready ?? 0} movimenti</button> : null} <button className="ghost mt" onClick={reset}>Chiudi dettaglio</button>
+      {batch.status === "preview" && Number(accounts.find(account => account.id === batch.account_id)?.opening_balance ?? 0) !== 0 && !accounts.find(account => account.id === batch.account_id)?.balance_as_of && <div className="notice">Definisci la data a cui si riferisce il saldo iniziale del conto prima di importare movimenti, altrimenti il saldo verrebbe conteggiato due volte.</div>}
+      {batch.status === "preview" ? <button className="primary mt" disabled={busy || !(counts.ready > 0) || (Number(accounts.find(account => account.id === batch.account_id)?.opening_balance ?? 0) !== 0 && !accounts.find(account => account.id === batch.account_id)?.balance_as_of)} onClick={() => void runImport()}>Importa atomicamente {counts.ready ?? 0} movimenti</button> : null} <button className="ghost mt" onClick={reset}>Chiudi dettaglio</button>
     </>}
     {!pending && !batch && <div className="mt"><h3>Storico import</h3><div className="historyTable">{history.map(item => <div className="historyRow" key={item.id}><span><b>{item.filename || "—"}</b><small>{accounts.find(account => account.id === item.account_id)?.name || item.account_id}</small></span><span>{item.created_at ? new Date(item.created_at).toLocaleString("it-IT") : "—"}</span><span>{item.status}</span><span>{item.row_count} righe</span><span>{item.imported_count} importate</span><span>{item.duplicate_count} duplicate</span><span>{item.ignored_count} ignorate</span><span>{item.error_count} errori</span><button className="ghost" onClick={() => void loadBatch(item.id)}>Apri dettaglio</button></div>)}</div></div>}
   </section>;

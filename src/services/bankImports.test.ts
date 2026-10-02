@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classifyDuplicate, possibleTransfer, transferTypeForAccounts } from "./bankImports.ts";
+import { classifyDuplicate, createImportPreview, possibleTransfer, transferTypeForAccounts } from "./bankImports.ts";
 import type { ImportRow } from "../types/imports.ts";
 import type { LedgerTransaction } from "../types/ledger.ts";
 
@@ -26,4 +26,23 @@ test("broker pairs are investments while cash, checking and credit-card pairs ar
   assert.equal(transferTypeForAccounts("checking", "broker"), "investment_transfer");
   assert.equal(transferTypeForAccounts("checking", "savings"), "internal_transfer");
   assert.equal(transferTypeForAccounts("checking", "credit_card"), "internal_transfer");
+});
+
+test("preview persists the parser key selected by the registry", async () => {
+  let insertedBatch: Record<string, unknown> | undefined;
+  const builder = {
+    select() { return this; }, eq() { return this; }, neq() { return this; }, limit() { return Promise.resolve({ data: [], error: null }); },
+  };
+  const client = { from(table: string) {
+    if (table === "import_batches") return {
+      ...builder,
+      insert(value: Record<string, unknown>) { insertedBatch = value; return { select: () => ({ single: async () => ({ data: { id: "batch-1" }, error: null }) }) }; },
+      update() { return { eq() { return this; }, then(resolve: (value: unknown) => void) { resolve({ error: null }); } }; },
+    };
+    throw new Error(`Unexpected table ${table}`);
+  } };
+  const file = new File(["synthetic"], "statement.xlsx");
+  const id = await createImportPreview(client as never, "user-1", "account-1", file, [], await file.arrayBuffer(), "american_express_v1");
+  assert.equal(id, "batch-1");
+  assert.equal(insertedBatch?.parser_key, "american_express_v1");
 });

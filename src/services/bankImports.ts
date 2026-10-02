@@ -33,7 +33,7 @@ export function classifyDuplicate(row: ImportRow, externalIds: Set<string>, fing
 }
 
 export async function createImportPreview(
-  client: SupabaseClient, userId: string, accountId: string, file: File, rows: ImportRow[], fileData: ArrayBuffer,
+  client: SupabaseClient, userId: string, accountId: string, file: File, rows: ImportRow[], fileData: ArrayBuffer, parserKey: string,
 ): Promise<string> {
   const source_format = file.name.toLocaleLowerCase().endsWith(".csv") ? "csv" : "xlsx";
   const file_hash = await sha256(fileData);
@@ -42,7 +42,7 @@ export async function createImportPreview(
   if (previousBatch.data?.length) throw new Error("Questo file è già stato caricato per il conto selezionato.");
   const { data: batch, error: batchError } = await client.from("import_batches").insert({
     user_id: userId, account_id: accountId, filename: file.name, file_hash,
-    source_format, parser_key: "generic_bank_v1", status: "preview", row_count: rows.length,
+    source_format, parser_key: parserKey, status: "preview", row_count: rows.length,
     error_count: rows.filter((row) => row.status === "error").length,
   }).select("id").single();
   if (batchError || !batch) throw batchError ?? new Error("Batch import non creato.");

@@ -18,7 +18,7 @@ const aliases: Record<MappingField, readonly string[]> = {
   external_id: ["id", "id operazione", "transaction id", "numero operazione", "riferimento"],
 };
 
-const normalizedKey = (value: string) => value.trim().toLocaleLowerCase("it-IT").replace(/\s+/g, " ");
+export const normalizedKey = (value: unknown) => String(value ?? "").trim().toLocaleLowerCase("it-IT").replace(/\s+/g, " ");
 export function detectHeaders(rows: RawBankRow[]): string[] {
   return Array.from(new Set(rows.flatMap((row) => Object.keys(row))));
 }
@@ -32,8 +32,9 @@ export function suggestColumnMapping(headers: string[]): ColumnMapping {
 export function normalizeDate(value: unknown): string | null {
   if (value instanceof Date && !Number.isNaN(value.valueOf())) return value.toISOString().slice(0, 10);
   if (typeof value === "number") {
-    const parsed = XLSX.SSF.parse_date_code(value);
-    return parsed ? `${parsed.y}-${String(parsed.m).padStart(2, "0")}-${String(parsed.d).padStart(2, "0")}` : null;
+    // Excel's 1900 date system includes its historic leap-year bug; 1899-12-30 is the canonical epoch.
+    const parsed = new Date(Date.UTC(1899, 11, 30) + Math.floor(value) * 86_400_000);
+    return Number.isFinite(value) && value > 0 ? parsed.toISOString().slice(0, 10) : null;
   }
   const text = String(value ?? "").trim();
   if (!text) return null;
@@ -110,6 +111,19 @@ export function readWorkbook(workbook: XLSX.WorkBook): ReadBankFile {
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
   const rows = sheet ? XLSX.utils.sheet_to_json<RawBankRow>(sheet, { raw: true, defval: "" }) : [];
   return { headers: detectHeaders(rows), rows };
+}
+
+export function sheetRows(workbook: XLSX.WorkBook, sheetName: string): unknown[][] {
+  const sheet = workbook.Sheets[sheetName];
+  return sheet ? XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, raw: true, defval: "" }) : [];
+}
+
+export function tableAt(rows: unknown[][], headerIndex: number): ReadBankFile {
+  const headers = rows[headerIndex].map((cell) => String(cell ?? "").trim());
+  return {
+    headers,
+    rows: rows.slice(headerIndex + 1).map((cells) => Object.fromEntries(headers.map((header, index) => [header || `column_${index}`, cells[index] ?? ""]))),
+  };
 }
 
 // Compatibility helpers for callers that accept automatic mapping.

@@ -18,6 +18,14 @@ test("balance anchor only includes movements after the closing date", () => {
   ]), 1_950);
 });
 
+test("balance anchor uses booking date when available and remains strictly after the closing date", () => {
+  const anchored = { ...account("a", 1_000), balance_as_of: "2026-09-20" };
+  assert.equal(accountBalance(anchored, [
+    { ...movement("a", -100), transaction_date: "2026-09-19", booking_date: "2026-09-21" },
+    { ...movement("a", -50), transaction_date: "2026-09-19", booking_date: "2026-09-20" },
+  ]), 900);
+});
+
 test("total liquidity includes only active accounts configured for liquidity", () => {
   assert.equal(totalLiquidity([account("a", 100), account("b", 500, false)], [movement("a", 25), movement("b", 50)]), 125);
 });
