@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classifyDuplicate, createImportPreview, possibleTransfer, transferTypeForAccounts } from "./bankImports.ts";
+import { chunkValues, classifyDuplicate, createImportPreview, possibleTransfer, transferTypeForAccounts } from "./bankImports.ts";
 import type { ImportRow } from "../types/imports.ts";
 import type { LedgerTransaction } from "../types/ledger.ts";
 
@@ -8,8 +8,16 @@ const movement = (overrides: Partial<LedgerTransaction> = {}): LedgerTransaction
 const row = (external_id: string | null, dedupe_fingerprint: string): ImportRow => ({ row_index: 0, transaction_date: "2026-09-21", booking_date: null, amount: 1, description: "x", merchant: null, external_id, dedupe_fingerprint, suggested_transaction_type: "unclassified", suggested_category_id: null, status: "ready", raw_data: {} });
 
 test("external id is a certain duplicate while fingerprint is only possible", () => {
-  assert.equal(classifyDuplicate(row("ext", "new"), new Set(["ext"]), new Set()), "duplicate");
-  assert.equal(classifyDuplicate(row(null, "same"), new Set(), new Set(["same"])), "possible_duplicate");
+  assert.equal(classifyDuplicate(row("REF-A", "FP-X"), new Set(["REF-A"]), new Set()), "duplicate");
+  assert.equal(classifyDuplicate(row("REF-B", "FP-X"), new Set(["REF-A"]), new Set(["FP-X"])), "ready");
+  assert.equal(classifyDuplicate(row(null, "FP-X"), new Set(), new Set(["FP-X"])), "possible_duplicate");
+});
+
+test("chunkValues splits 245 values without loss or duplication", () => {
+  const values = Array.from({ length: 245 }, (_, index) => index);
+  const chunks = chunkValues(values, 100);
+  assert.deepEqual(chunks.map((chunk) => chunk.length), [100, 100, 45]);
+  assert.deepEqual(chunks.flat(), values);
 });
 
 test("transfer candidates are conservative", () => {
@@ -30,6 +38,7 @@ test("broker pairs are investments while cash, checking and credit-card pairs ar
 
 test("preview persists the parser key selected by the registry", async () => {
   let insertedBatch: Record<string, unknown> | undefined;
+  const updates: Record<string, unknown>[] = [];
   const builder = {
     select() { return this; }, eq() { return this; }, neq() { return this; }, limit() { return Promise.resolve({ data: [], error: null }); },
   };
@@ -37,7 +46,7 @@ test("preview persists the parser key selected by the registry", async () => {
     if (table === "import_batches") return {
       ...builder,
       insert(value: Record<string, unknown>) { insertedBatch = value; return { select: () => ({ single: async () => ({ data: { id: "batch-1" }, error: null }) }) }; },
-      update() { return { eq() { return this; }, then(resolve: (value: unknown) => void) { resolve({ error: null }); } }; },
+      update(value: Record<string, unknown>) { updates.push(value); return { eq() { return this; }, then(resolve: (value: unknown) => void) { resolve({ error: null }); } }; },
     };
     throw new Error(`Unexpected table ${table}`);
   } };
@@ -45,4 +54,53 @@ test("preview persists the parser key selected by the registry", async () => {
   const id = await createImportPreview(client as never, "user-1", "account-1", file, [], await file.arrayBuffer(), "american_express_v1");
   assert.equal(id, "batch-1");
   assert.equal(insertedBatch?.parser_key, "american_express_v1");
+  assert.equal(insertedBatch?.status, "processing");
+  assert.equal(updates.at(-1)?.status, "preview");
+});
+
+function stagingClient(failRowInsert: boolean) {
+  const batchUpdates: Record<string, unknown>[] = [];
+  let insertedBatch: Record<string, unknown> | undefined;
+  const emptyQuery = () => {
+    const query = {
+      select() { return this; }, eq() { return this; }, neq() { return this; }, in() { return this; },
+      limit() { return Promise.resolve({ data: [], error: null }); },
+      then(resolve: (value: unknown) => void) { resolve({ data: [], error: null }); },
+    };
+    return query;
+  };
+  const client = { from(table: string) {
+    if (table === "import_batches") return {
+      ...emptyQuery(),
+      insert(value: Record<string, unknown>) { insertedBatch = value; return { select: () => ({ single: async () => ({ data: { id: "batch-1" }, error: null }) }) }; },
+      update(value: Record<string, unknown>) { batchUpdates.push(value); return emptyQuery(); },
+    };
+    if (table === "transactions") return emptyQuery();
+    if (table === "import_rows") return {
+      ...emptyQuery(),
+      insert(values: unknown[]) { return { select: async () => failRowInsert
+        ? { data: null, error: new Error("insert denied") }
+        : { data: values.map((_, index) => ({ id: `row-${index}` })), error: null } }; },
+    };
+    throw new Error(`Unexpected table ${table}`);
+  } };
+  return { client, batchUpdates, get insertedBatch() { return insertedBatch; } };
+}
+
+test("preview becomes visible only after every staged row was persisted", async () => {
+  const mock = stagingClient(false);
+  const rows = [row("REF-A", "FP-A"), row("REF-B", "FP-B")];
+  const file = new File(["synthetic-success"], "statement.xlsx");
+  await createImportPreview(mock.client as never, "user-1", "account-1", file, rows, await file.arrayBuffer(), "american_express_v1");
+  assert.equal(mock.insertedBatch?.status, "processing");
+  assert.deepEqual(mock.batchUpdates.map((update) => update.status), ["preview"]);
+});
+
+test("failed staging marks the processing batch failed and never preview", async () => {
+  const mock = stagingClient(true);
+  const file = new File(["synthetic-failure"], "statement.xlsx");
+  await assert.rejects(createImportPreview(mock.client as never, "user-1", "account-1", file, [row("REF-A", "FP-A")], await file.arrayBuffer(), "american_express_v1"), /insert denied/);
+  assert.equal(mock.insertedBatch?.status, "processing");
+  assert.deepEqual(mock.batchUpdates.map((update) => update.status), ["failed"]);
+  assert.match(String(mock.batchUpdates[0]?.notes), /insert denied/);
 });

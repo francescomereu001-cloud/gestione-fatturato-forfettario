@@ -4,7 +4,7 @@ import { Upload } from "lucide-react";
 import * as XLSX from "xlsx";
 import { fingerprint, mappingFields, normalizeBankRows, readCsv, suggestColumnMapping, type ColumnMapping, type ReadBankFile } from "../import/parsers/bankStatement";
 import { detectBankImport, type BankImportDetection } from "../import/parsers/bankImportRegistry";
-import { commitImportBatch, createImportPreview } from "../services/bankImports";
+import { cancelImportBatch, commitImportBatch, createImportPreview } from "../services/bankImports";
 import type { ImportBatch, ImportRow, ImportRowStatus } from "../types/imports";
 import { transactionTypes, type Account, type TransactionCategory, type TransactionType } from "../types/ledger";
 
@@ -20,7 +20,7 @@ export function BankImportPage({ client, userId }: { client: SupabaseClient; use
   const [history, setHistory] = useState<ImportBatch[]>([]); const [accountId, setAccountId] = useState("");
   const [batch, setBatch] = useState<ImportBatch | null>(null); const [rows, setRows] = useState<ImportRow[]>([]);
   const [pending, setPending] = useState<PendingFile | null>(null); const [mapping, setMapping] = useState<ColumnMapping>({});
-  const [message, setMessage] = useState(""); const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState(""); const [busy, setBusy] = useState(false); const [busyMessage, setBusyMessage] = useState("");
 
   const loadHistory = useCallback(async () => {
     const result = await client.from("import_batches").select("*").eq("user_id", userId).order("created_at", { ascending: false });
@@ -55,7 +55,7 @@ export function BankImportPage({ client, userId }: { client: SupabaseClient; use
     finally { setBusy(false); }
   };
   const createPreview = async () => {
-    if (!pending || !accountId) return; setBusy(true);
+    if (!pending || !accountId) return; setBusy(true); setBusyMessage("Preparazione movimenti…"); setMessage("");
     try {
       const selectedAccount = accounts.find((account) => account.id === accountId);
       if (pending.detection.compatibleAccountType && selectedAccount?.account_type !== pending.detection.compatibleAccountType) throw new Error("Il conto selezionato non è compatibile con questo provider.");
@@ -63,7 +63,7 @@ export function BankImportPage({ client, userId }: { client: SupabaseClient; use
       const batchId = await createImportPreview(client, userId, accountId, pending.file, parsed, pending.data, pending.detection.parserKey);
       setPending(null); await loadBatch(batchId); await loadHistory(); setMessage("Previsualizzazione creata. Controlla le righe prima di importare.");
     } catch (error) { setMessage(error instanceof Error ? error.message : "Import non riuscito."); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setBusyMessage(""); }
   };
   const updateRow = async (row: ImportRow, changes: Partial<ImportRow>) => {
     if (!row.id) return;
@@ -76,24 +76,29 @@ export function BankImportPage({ client, userId }: { client: SupabaseClient; use
     if (error) setMessage(error.message);
   };
   const runImport = async () => {
-    if (!batch) return; setBusy(true);
+    if (!batch) return;
     try {
       const selectedAccount = accounts.find((account) => account.id === batch.account_id);
       if (selectedAccount && Number(selectedAccount.opening_balance) !== 0 && !selectedAccount.balance_as_of) {
         throw new Error("Definisci la data a cui si riferisce il saldo iniziale del conto prima di importare movimenti, altrimenti il saldo verrebbe conteggiato due volte.");
       }
-      // Recompute and persist from the displayed canonical values before the atomic DB commit.
-      const canonical = rows.filter((row) => row.id && row.status === "ready").map((row) => ({ id: row.id!, dedupe_fingerprint: fingerprint(row) }));
-      for (const item of canonical) {
-        const result = await client.from("import_rows").update({ dedupe_fingerprint: item.dedupe_fingerprint }).eq("id", item.id).eq("user_id", userId);
-        if (result.error) throw result.error;
-      }
-      const imported = await commitImportBatch(client, batch.id); await loadBatch(batch.id); await loadHistory(); setMessage(`${imported} movimenti importati atomicamente.`);
+      setBusy(true); setBusyMessage("Importazione nel ledger…"); setMessage("");
+      const imported = await commitImportBatch(client, batch.id); await loadBatch(batch.id); await loadHistory(); setMessage(`${imported} movimenti importati.`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Import non riuscito: nessun movimento è stato registrato."); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setBusyMessage(""); }
+  };
+  const cancelBatch = async () => {
+    if (!batch || batch.status === "completed") return;
+    setBusy(true); setBusyMessage("Annullamento import…"); setMessage("");
+    try {
+      await cancelImportBatch(client, userId, batch.id); await loadBatch(batch.id); await loadHistory();
+      setMessage("Import annullato. Ora puoi ricaricare lo stesso file.");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Impossibile annullare l'import."); }
+    finally { setBusy(false); setBusyMessage(""); }
   };
   const reset = () => { setBatch(null); setRows([]); setPending(null); setMapping({}); setAccountId(""); setMessage(""); };
   const counts = rows.reduce<Record<string, number>>((result, row) => ({ ...result, [row.status]: (result[row.status] ?? 0) + 1 }), {});
+  const incompleteBatch = batch?.status === "preview" && rows.length < batch.row_count;
 
   return <section className="panel"><h3>Import movimenti bancari</h3><p className="muted">CSV e XLSX vengono mappati e normalizzati in staging. Il commit del batch è atomico.</p>
     {!batch && !pending && <label className="uploadBox"><Upload size={32}/><strong>{busy ? "Lettura…" : "Carica estratto conto"}</strong><span>.csv / .xlsx</span><input type="file" accept=".csv,.xlsx" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void readFile(file); }}/></label>}
@@ -102,8 +107,10 @@ export function BankImportPage({ client, userId }: { client: SupabaseClient; use
       {pending.detection.compatibleAccountType && !accounts.some(account => account.account_type === pending.detection.compatibleAccountType) && <div className="notice">Per importare questo file crea prima il relativo conto/carta nella sezione Accounts.</div>}
       {pending.detection.generic && <><h4>Mappa le colonne</h4><div className="formGrid">{mappingFields.map(field => <label className="field" key={field}>{mappingLabels[field]}<select value={mapping[field] ?? ""} onChange={event => setMapping({ ...mapping, [field]: event.target.value || undefined })}><option value="">Non mappata</option>{pending.read.headers.map(header => <option key={header}>{header}</option>)}</select></label>)}</div></>}
       <button className="primary" disabled={busy || !accountId || (pending.detection.generic && (!mapping.transaction_date || !mapping.description || (!mapping.amount && !mapping.debit && !mapping.credit)))} onClick={() => void createPreview()}>Crea preview</button> <button className="ghost" onClick={reset}>Annulla</button></div>}
+    {busyMessage && <div className="notice">{busyMessage}</div>}
     {message && <div className="notice">{message}</div>}
     {batch && <><div className="importSummary"><b>{batch.filename}</b><span>Pronte: {counts.ready ?? 0}</span><span>Possibili duplicati: {counts.possible_duplicate ?? 0}</span><span>Duplicati: {counts.duplicate ?? 0}</span><span>Errori: {counts.error ?? 0}</span></div>
+      {incompleteBatch && <div className="notice">Import incompleto: le righe dichiarate dal file non sono state salvate correttamente. Annulla il batch e ricarica il file.</div>}
       <div className="importTable">{rows.map(row => <div className={`importRow status-${row.status}`} key={row.id ?? row.row_index}>
         <span><input type="date" value={row.transaction_date ?? ""} disabled={batch.status !== "preview" || row.status === "imported" || row.status === "duplicate"} onChange={event => void updateRow(row, { transaction_date: event.target.value })}/><small>riga {row.row_index + 1}</small></span>
         <input value={row.description ?? ""} disabled={batch.status !== "preview" || row.status === "imported" || row.status === "duplicate"} onChange={event => void updateRow(row, { description: event.target.value })}/>
@@ -113,7 +120,7 @@ export function BankImportPage({ client, userId }: { client: SupabaseClient; use
         <select value={row.status} disabled={batch.status !== "preview" || row.status === "imported" || row.status === "error" || row.status === "duplicate"} onChange={event => void updateRow(row, { status: event.target.value as ImportRowStatus })}><option value="ready">Importa</option><option value="duplicate">Duplicato</option><option value="ignored">Ignora</option>{row.status === "possible_duplicate" && <option value="possible_duplicate">Da verificare</option>}<option value="imported" disabled>Importato</option><option value="error" disabled>Errore</option></select>
       </div>)}</div>
       {batch.status === "preview" && Number(accounts.find(account => account.id === batch.account_id)?.opening_balance ?? 0) !== 0 && !accounts.find(account => account.id === batch.account_id)?.balance_as_of && <div className="notice">Definisci la data a cui si riferisce il saldo iniziale del conto prima di importare movimenti, altrimenti il saldo verrebbe conteggiato due volte.</div>}
-      {batch.status === "preview" ? <button className="primary mt" disabled={busy || !(counts.ready > 0) || (Number(accounts.find(account => account.id === batch.account_id)?.opening_balance ?? 0) !== 0 && !accounts.find(account => account.id === batch.account_id)?.balance_as_of)} onClick={() => void runImport()}>Importa atomicamente {counts.ready ?? 0} movimenti</button> : null} <button className="ghost mt" onClick={reset}>Chiudi dettaglio</button>
+      {batch.status === "preview" && !incompleteBatch ? <button className="primary mt" disabled={busy || !(counts.ready > 0) || (Number(accounts.find(account => account.id === batch.account_id)?.opening_balance ?? 0) !== 0 && !accounts.find(account => account.id === batch.account_id)?.balance_as_of)} onClick={() => void runImport()}>Importa atomicamente {counts.ready ?? 0} movimenti</button> : null} {batch.status !== "completed" && batch.status !== "cancelled" && <button className="ghost mt" disabled={busy} onClick={() => void cancelBatch()}>Annulla import</button>} <button className="ghost mt" disabled={busy} onClick={reset}>Chiudi dettaglio</button>
     </>}
     {!pending && !batch && <div className="mt"><h3>Storico import</h3><div className="historyTable">{history.map(item => <div className="historyRow" key={item.id}><span><b>{item.filename || "—"}</b><small>{accounts.find(account => account.id === item.account_id)?.name || item.account_id}</small></span><span>{item.created_at ? new Date(item.created_at).toLocaleString("it-IT") : "—"}</span><span>{item.status}</span><span>{item.row_count} righe</span><span>{item.imported_count} importate</span><span>{item.duplicate_count} duplicate</span><span>{item.ignored_count} ignorate</span><span>{item.error_count} errori</span><button className="ghost" onClick={() => void loadBatch(item.id)}>Apri dettaglio</button></div>)}</div></div>}
   </section>;

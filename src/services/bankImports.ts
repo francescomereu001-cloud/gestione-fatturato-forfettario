@@ -27,9 +27,22 @@ export function transferTypeForAccounts(first: AccountType, second: AccountType)
 }
 
 export function classifyDuplicate(row: ImportRow, externalIds: Set<string>, fingerprints: Set<string>): ImportRow["status"] {
-  if (row.external_id && externalIds.has(row.external_id)) return "duplicate";
+  if (row.external_id) return externalIds.has(row.external_id) ? "duplicate" : row.status;
   if (row.dedupe_fingerprint && fingerprints.has(row.dedupe_fingerprint)) return "possible_duplicate";
   return row.status;
+}
+
+export function chunkValues<T>(values: T[], size = 100): T[][] {
+  if (!Number.isInteger(size) || size < 1) throw new Error("La dimensione dei chunk deve essere positiva.");
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += size) chunks.push(values.slice(index, index + size));
+  return chunks;
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object" && "message" in error) return String(error.message);
+  return "errore sconosciuto";
 }
 
 export async function createImportPreview(
@@ -42,39 +55,64 @@ export async function createImportPreview(
   if (previousBatch.data?.length) throw new Error("Questo file è già stato caricato per il conto selezionato.");
   const { data: batch, error: batchError } = await client.from("import_batches").insert({
     user_id: userId, account_id: accountId, filename: file.name, file_hash,
-    source_format, parser_key: parserKey, status: "preview", row_count: rows.length,
+    source_format, parser_key: parserKey, status: "processing", row_count: rows.length,
     error_count: rows.filter((row) => row.status === "error").length,
   }).select("id").single();
   if (batchError || !batch) throw batchError ?? new Error("Batch import non creato.");
 
-  const externalIds = rows.flatMap((row) => row.external_id ? [row.external_id] : []);
-  const fingerprints = rows.flatMap((row) => row.dedupe_fingerprint ? [row.dedupe_fingerprint] : []);
-  const [existingTransactions, previousRows] = await Promise.all([
-    externalIds.length ? client.from("transactions").select("id,external_id").eq("user_id", userId).eq("account_id", accountId).eq("source", "bank_import").in("external_id", externalIds) : Promise.resolve({ data: [], error: null }),
-    fingerprints.length ? client.from("import_rows").select("dedupe_fingerprint,import_batches!inner(account_id)").eq("user_id", userId).eq("import_batches.account_id", accountId).in("dedupe_fingerprint", fingerprints).in("status", ["imported", "duplicate"]) : Promise.resolve({ data: [], error: null }),
-  ]);
-  if (existingTransactions.error || previousRows.error) throw existingTransactions.error ?? previousRows.error;
-  const duplicateIds = new Set((existingTransactions.data ?? []).map((row) => row.external_id));
-  const duplicateFingerprints = new Set((previousRows.data ?? []).map((row) => row.dedupe_fingerprint));
-  const seenExternalIds = new Set<string>(duplicateIds);
-  const seen = new Set<string>(duplicateFingerprints);
-  const staged = rows.map((row) => {
-    const status = classifyDuplicate(row, seenExternalIds, seen);
-    if (row.external_id) seenExternalIds.add(row.external_id);
-    if (row.dedupe_fingerprint) seen.add(row.dedupe_fingerprint);
-    return { ...row, user_id: userId, batch_id: batch.id, status };
-  });
-  if (staged.length) {
-    const { error } = await client.from("import_rows").insert(staged);
-    if (error) { await client.from("import_batches").update({ status: "failed", notes: error.message }).eq("id", batch.id).eq("user_id", userId); throw error; }
+  try {
+    const externalIds = [...new Set(rows.flatMap((row) => row.external_id ? [row.external_id] : []))];
+    const fingerprints = [...new Set(rows.flatMap((row) => row.dedupe_fingerprint ? [row.dedupe_fingerprint] : []))];
+    const duplicateIds = new Set<string>();
+    const duplicateFingerprints = new Set<string>();
+
+    for (const values of chunkValues(externalIds)) {
+      const result = await client.from("transactions").select("id,external_id").eq("user_id", userId).eq("account_id", accountId).eq("source", "bank_import").in("external_id", values);
+      if (result.error) throw result.error;
+      for (const existing of result.data ?? []) if (existing.external_id) duplicateIds.add(existing.external_id);
+    }
+    for (const values of chunkValues(fingerprints)) {
+      const result = await client.from("import_rows").select("dedupe_fingerprint,import_batches!inner(account_id)").eq("user_id", userId).eq("import_batches.account_id", accountId).in("dedupe_fingerprint", values).in("status", ["imported", "duplicate"]);
+      if (result.error) throw result.error;
+      for (const existing of result.data ?? []) if (existing.dedupe_fingerprint) duplicateFingerprints.add(existing.dedupe_fingerprint);
+    }
+
+    const seenExternalIds = new Set(duplicateIds);
+    const seenFingerprints = new Set(duplicateFingerprints);
+    const staged = rows.map((row) => {
+      const status = classifyDuplicate(row, seenExternalIds, seenFingerprints);
+      if (row.external_id) seenExternalIds.add(row.external_id);
+      if (row.dedupe_fingerprint) seenFingerprints.add(row.dedupe_fingerprint);
+      return { ...row, user_id: userId, batch_id: batch.id, status };
+    });
+
+    let persistedCount = 0;
+    for (const chunk of chunkValues(staged)) {
+      const result = await client.from("import_rows").insert(chunk).select("id");
+      if (result.error) throw result.error;
+      persistedCount += result.data?.length ?? 0;
+    }
+    if (persistedCount !== staged.length) throw new Error(`Staging incompleto: salvate ${persistedCount} righe su ${staged.length}.`);
+
+    const { error: counterError } = await client.from("import_batches").update({
+      status: "preview",
+      duplicate_count: staged.filter((row) => row.status === "duplicate").length,
+      ignored_count: staged.filter((row) => row.status === "ignored").length,
+      error_count: staged.filter((row) => row.status === "error").length,
+    }).eq("id", batch.id).eq("user_id", userId);
+    if (counterError) throw counterError;
+    return batch.id;
+  } catch (error) {
+    await client.from("import_batches").update({ status: "failed", notes: `Staging non completato: ${errorMessage(error)}` }).eq("id", batch.id).eq("user_id", userId);
+    throw error;
   }
-  const { error: counterError } = await client.from("import_batches").update({
-    duplicate_count: staged.filter((row) => row.status === "duplicate").length,
-    ignored_count: staged.filter((row) => row.status === "ignored").length,
-    error_count: staged.filter((row) => row.status === "error").length,
-  }).eq("id", batch.id).eq("user_id", userId);
-  if (counterError) throw counterError;
-  return batch.id;
+}
+
+export async function cancelImportBatch(client: SupabaseClient, userId: string, batchId: string): Promise<void> {
+  const { data, error } = await client.from("import_batches").update({ status: "cancelled" })
+    .eq("id", batchId).eq("user_id", userId).neq("status", "completed").select("id").maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error("Un import completato non può essere annullato.");
 }
 
 export async function commitImportBatch(client: SupabaseClient, batchId: string): Promise<number> {
