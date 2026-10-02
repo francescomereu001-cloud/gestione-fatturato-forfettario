@@ -4,6 +4,20 @@ import { fingerprint, normalizeAmount, normalizeDate, normalizedKey, sheetRows, 
 
 export const AMERICAN_EXPRESS_PARSER_KEY = "american_express_v1";
 
+export function normalizeAmericanExpressDate(value: unknown): string | null {
+  if (value instanceof Date) return normalizeDate(value);
+  if (typeof value === "number") return Number.isFinite(value) && value > 0 && value <= 2_958_465 ? normalizeDate(value) : null;
+  const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(value ?? "").trim());
+  if (!match) return null;
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  const year = Number(match[3]);
+  const candidate = new Date(Date.UTC(year, month - 1, day));
+  if (month < 1 || month > 12 || day < 1 || candidate.getUTCFullYear() !== year
+    || candidate.getUTCMonth() !== month - 1 || candidate.getUTCDate() !== day) return null;
+  return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+}
+
 export function parseAmericanExpress(workbook: XLSX.WorkBook): ImportRow[] | null {
   const sheetName = workbook.SheetNames.find((name) => normalizedKey(name) === "dettagli transazione");
   if (!sheetName) return null;
@@ -16,7 +30,7 @@ export function parseAmericanExpress(workbook: XLSX.WorkBook): ImportRow[] | nul
   const table = tableAt(matrix, headerIndex);
   return table.rows.filter((raw) => Object.values(raw).some((value) => String(value ?? "").trim())).map((raw_data, row_index) => {
     const field = (name: string) => raw_data[table.headers.find((header) => normalizedKey(header) === name) ?? ""];
-    const transaction_date = normalizeDate(field("data"));
+    const transaction_date = normalizeAmericanExpressDate(field("data"));
     const rawAmount = normalizeAmount(field("importo"));
     const amount = rawAmount === null ? null : -rawAmount;
     const description = String(field("descrizione") ?? "").trim() || null;
