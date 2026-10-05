@@ -32,3 +32,26 @@ test("normalized signs keep account balance and economic cashflow coherent", () 
   assert.equal(accountBalance(account, rows), 100);
   assert.deepEqual(cashflowSummary(rows), { income: 100, expenses: 20, cashflow: 80 });
 });
+
+test("card settlement transfers have zero cashflow without changing balances", () => {
+  const settlement = [
+    { ...transaction("internal_transfer", -1500), account_id: "checking", transfer_account_id: "card", transfer_group_id: "g", classification_method: "transfer_match" as const },
+    { ...transaction("internal_transfer", 1500), account_id: "card", transfer_account_id: "checking", transfer_group_id: "g", classification_method: "transfer_match" as const },
+  ];
+  assert.deepEqual(cashflowSummary(settlement), { income: 0, expenses: 0, cashflow: 0 });
+  const checking = { id: "checking", name: "Conto", account_type: "checking" as const, currency: "EUR", opening_balance: 2000, is_active: true, include_in_liquidity: true };
+  assert.equal(accountBalance(checking, settlement), 500);
+});
+
+test("refunds reduce expenses while unclassified movements stay economically neutral", () => {
+  assert.deepEqual(cashflowSummary([transaction("expense", -100), transaction("refund", 20), transaction("unclassified", 1000), transaction("unclassified", -1000)]), { income: 0, expenses: 80, cashflow: -80 });
+});
+
+test("manual classification changes no monetary or account anchor fields", () => {
+  const original: LedgerTransaction = { ...transaction("unclassified", -42), booking_date: "2026-01-02" };
+  const classified = transactionPayload({ ...original, transaction_type: "expense" }, "owner");
+  assert.equal(classified.amount, original.amount);
+  assert.equal(classified.transaction_date, original.transaction_date);
+  assert.equal(classified.booking_date, original.booking_date);
+  assert.equal(classified.classification_method, "manual");
+});

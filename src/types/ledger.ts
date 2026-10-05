@@ -1,10 +1,12 @@
 export const accountTypes = ["checking", "savings", "credit_card", "broker", "cash", "technical", "other"] as const;
 export const transactionTypes = ["unclassified", "income", "expense", "internal_transfer", "investment_transfer", "debt_principal", "debt_interest", "refund", "adjustment"] as const;
 export const reconciliationStatuses = ["pending", "confirmed", "ignored"] as const;
+export const classificationMethods = ["provider_rule", "user_rule", "transfer_match", "manual"] as const;
 
 export type AccountType = (typeof accountTypes)[number];
 export type TransactionType = (typeof transactionTypes)[number];
 export type ReconciliationStatus = (typeof reconciliationStatuses)[number];
+export type ClassificationMethod = (typeof classificationMethods)[number];
 
 export type Account = {
   id?: string; user_id?: string; name: string; institution?: string | null;
@@ -25,5 +27,7 @@ export type LedgerTransaction = {
   transfer_account_id?: string | null; transfer_group_id?: string | null;
   source: string; external_id?: string | null; reconciliation_status: ReconciliationStatus;
   import_batch_id?: string | null;
+  classification_method?: ClassificationMethod | null; classification_rule_id?: string | null;
+  classified_at?: string | null;
   notes?: string | null;
 };

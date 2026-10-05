@@ -5,6 +5,7 @@ import * as XLSX from "xlsx";
 import { fingerprint, mappingFields, normalizeBankRows, readCsv, suggestColumnMapping, type ColumnMapping, type ReadBankFile } from "../import/parsers/bankStatement";
 import { detectBankImport, type BankImportDetection } from "../import/parsers/bankImportRegistry";
 import { cancelImportBatch, commitImportBatch, createImportPreview } from "../services/bankImports";
+import { classifyTransactions } from "../services/classification";
 import type { ImportBatch, ImportRow, ImportRowStatus } from "../types/imports";
 import { transactionTypes, type Account, type TransactionCategory, type TransactionType } from "../types/ledger";
 
@@ -83,7 +84,7 @@ export function BankImportPage({ client, userId }: { client: SupabaseClient; use
         throw new Error("Definisci la data a cui si riferisce il saldo iniziale del conto prima di importare movimenti, altrimenti il saldo verrebbe conteggiato due volte.");
       }
       setBusy(true); setBusyMessage("Importazione nel ledger…"); setMessage("");
-      const imported = await commitImportBatch(client, batch.id); await loadBatch(batch.id); await loadHistory(); setMessage(`${imported} movimenti importati.`);
+      const imported = await commitImportBatch(client, batch.id); let classificationMessage = ""; try { const result = await classifyTransactions(client, batch.id); classificationMessage = ` ${result.classified_count} classificati · ${result.transfer_count} trasferimenti riconciliati · ${result.unclassified_count} da verificare.`; } catch (reason) { classificationMessage = ` Movimenti importati, classificazione automatica non completata: ${reason instanceof Error ? reason.message : "errore sconosciuto"}`; } await loadBatch(batch.id); await loadHistory(); setMessage(`${imported} movimenti importati.${classificationMessage}`);
     } catch (error) { setMessage(error instanceof Error ? error.message : "Import non riuscito: nessun movimento è stato registrato."); }
     finally { setBusy(false); setBusyMessage(""); }
   };
