@@ -4,11 +4,13 @@ import type { AccountType } from "../../types/ledger.ts";
 import { normalizeBankRows, readWorkbook, suggestColumnMapping, type ReadBankFile } from "./bankStatement.ts";
 import { AMERICAN_EXPRESS_PARSER_KEY, parseAmericanExpress } from "./americanExpress.ts";
 import { ISYBANK_PARSER_KEY, parseIsyBank } from "./isyBank.ts";
+import { ISYBANK_OPERATIONS_PARSER_KEY, parseIsyBankOperations } from "./isyBankOperations.ts";
 
 export type BankImportDetection = { parserKey: string; providerLabel: string; compatibleAccountType: AccountType | null; rows: ImportRow[]; read: ReadBankFile; generic: boolean };
 
 export function detectBankImport(workbook: XLSX.WorkBook): BankImportDetection {
   const providers = [
+    { parserKey: ISYBANK_OPERATIONS_PARSER_KEY, providerLabel: "IsyBank", compatibleAccountType: "checking" as const, parse: parseIsyBankOperations },
     { parserKey: ISYBANK_PARSER_KEY, providerLabel: "IsyBank", compatibleAccountType: "checking" as const, parse: parseIsyBank },
     { parserKey: AMERICAN_EXPRESS_PARSER_KEY, providerLabel: "American Express", compatibleAccountType: "credit_card" as const, parse: parseAmericanExpress },
   ];
