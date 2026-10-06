@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { accountPayload, internalTransferPayloads, normalizeTransactionAmount, transactionPayload } from "./ledger.ts";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { loadLedger, accountPayload, internalTransferPayloads, normalizeTransactionAmount, transactionPayload } from "./ledger.ts";
 import { accountBalance } from "../domain/accounts/calculations.ts";
 import { cashflowSummary } from "../domain/transactions/calculations.ts";
 import type { LedgerTransaction, TransactionType } from "../types/ledger.ts";
@@ -54,4 +55,24 @@ test("manual classification changes no monetary or account anchor fields", () =>
   assert.equal(classified.transaction_date, original.transaction_date);
   assert.equal(classified.booking_date, original.booking_date);
   assert.equal(classified.classification_method, "manual");
+});
+
+test("loadLedger seeds all provider categories idempotently for the same authenticated owner", async () => {
+  const persisted = new Map<string, unknown>();
+  const requests: unknown[] = [];
+  const client = { from: (table: string) => ({
+    upsert: async (rows: { user_id: string; system_key: string }[], options: unknown) => {
+      assert.equal(table, "transaction_categories"); requests.push(options);
+      for (const row of rows) persisted.set(`${row.user_id}/${row.system_key}`, row);
+      return { error: null };
+    },
+    select: () => ({ eq: () => ({ order: async () => ({ data: [], error: null }) }) }),
+  }) } as unknown as SupabaseClient;
+  await loadLedger(client, "synthetic-owner");
+  const count = persisted.size;
+  await loadLedger(client, "synthetic-owner");
+  assert.equal(persisted.size, count);
+  assert.deepEqual(requests, Array(2).fill({ onConflict: "user_id,system_key", ignoreDuplicates: true }));
+  for (const key of ["tobacco", "insurance", "fines", "gifts", "dining", "home", "subscriptions", "work"])
+    assert.ok(persisted.has(`synthetic-owner/expense_${key}`));
 });

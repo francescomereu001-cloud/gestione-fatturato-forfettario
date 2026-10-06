@@ -12,6 +12,8 @@ export async function loadLedger(client: SupabaseClient, userId: string) {
     ["Cura personale", "expense", "expense_personal"], ["Abbonamenti e servizi digitali", "expense", "expense_subscriptions"],
     ["Tempo libero", "expense", "expense_leisure"], ["Lavoro e professione", "expense", "expense_work"],
     ["Commissioni e spese bancarie", "expense", "expense_fees"], ["Tasse e contributi", "expense", "expense_taxes"],
+    ["Tabacchi", "expense", "expense_tobacco"], ["Assicurazioni", "expense", "expense_insurance"],
+    ["Multe e sanzioni", "expense", "expense_fines"], ["Regali", "expense", "expense_gifts"],
     ["Altro", "expense", "expense_other"], ["Trasferimenti", "transfer", "transfer_internal"],
     ["Investimenti", "asset", "asset_investments"], ["Debiti", "liability", "liability_debt"],
   ].map(([name, category_type, system_key]) => ownedBy({ name, category_type, system_key }, userId));

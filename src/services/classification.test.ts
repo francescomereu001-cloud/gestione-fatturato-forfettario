@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { matchesText, normalizeMatchText } from "./classification.ts";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { classifyTransactions, matchesText, normalizeMatchText } from "./classification.ts";
 
 const migration = readFileSync(new URL("../../supabase/migrations/202610020001_pr4_2_transaction_classification.sql", import.meta.url), "utf8");
 
@@ -39,4 +40,18 @@ test("rules are owner scoped, validate references, and use deterministic priorit
   assert.match(migration, /category must belong to classification rule owner/);
   assert.match(migration, /order by r\.priority desc, r\.created_at, r\.id/);
   assert.match(migration, /security invoker/);
+});
+
+test("classification stays server-owned and preserves the RPC summary", async () => {
+  const summary = { classified_count: 8, transfer_count: 2, unclassified_count: 3,
+    categorized_count: 6, uncategorized_count: 2, total_transfer_count: 4 };
+  const calls: unknown[] = [];
+  const client = { rpc: async (...args: unknown[]) => { calls.push(args); return { data: summary, error: null }; } } as unknown as SupabaseClient;
+  assert.deepEqual(await classifyTransactions(client, "synthetic-batch"), summary);
+  assert.deepEqual(calls, [["classify_transactions", { target_batch_id: "synthetic-batch" }]]);
+});
+
+test("classification surfaces server failures", async () => {
+  const client = { rpc: async () => ({ data: null, error: new Error("synthetic rejected batch") }) } as unknown as SupabaseClient;
+  await assert.rejects(classifyTransactions(client), /synthetic rejected batch/);
 });
