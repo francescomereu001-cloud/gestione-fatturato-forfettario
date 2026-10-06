@@ -23,7 +23,7 @@ test("recognizes operations after metadata and excludes summaries and repeated h
   ]));
   assert.equal(detected.parserKey, "isybank_operations_v1");
   assert.equal(detected.providerLabel, "IsyBank");
-  assert.equal(detected.compatibleAccountType, "checking");
+  assert.equal(detected.compatibleAccountType, null);
   assert.equal(detected.generic, false);
   assert.equal(detected.rows.length, 2);
   assert.deepEqual(detected.rows.map((row) => [row.transaction_date, row.amount, row.row_index]), [
@@ -34,6 +34,7 @@ test("recognizes operations after metadata and excludes summaries and repeated h
 test("maps canonical fields and preserves original bank metadata without classification", () => {
   const [row] = parseIsyBankOperations(workbook([headers, movement()]))!;
   assert.equal(row.description, "Descrizione sintetica");
+  assert.equal(row.source_instrument, "Conto sintetico");
   assert.equal(row.merchant, "PAGAMENTO TEST");
   assert.equal(row.booking_date, null);
   assert.equal(row.external_id, null);
@@ -91,4 +92,21 @@ test("handles a synthetic 903-movement XLSX without importing five introductory 
   assert.equal(detected.rows.at(-1)!.transaction_date, "2026-10-06");
   assert.ok(detected.rows.every((row) => row.status === "ready" && row.description && row.dedupe_fingerprint));
   assert.deepEqual(detected.rows.map((row) => row.amount), movements.map((row) => row[7]));
+});
+
+test("extracts distinct instruments while retaining the exact original metadata", () => {
+  const source = workbook([headers,
+    ["06/10/2026", "TEST", "Synthetic checking", " Conto TEST / 00000001 ", "Contabilizzato", "", "EUR", -10],
+    ["06/10/2026", "TEST", "Synthetic card", "Carta di credito **** 9999", "Contabilizzato", "", "EUR", -10],
+  ]);
+  const rows = parseIsyBankOperations(source)!;
+  assert.deepEqual(rows.map((row) => row.source_instrument), ["Conto TEST / 00000001", "Carta di credito **** 9999"]);
+  assert.equal(rows[0].raw_data["Conto o carta"], " Conto TEST / 00000001 ");
+  assert.ok(rows.every((row) => row.target_account_id === null && row.suggested_transaction_type === "unclassified"));
+});
+
+test("missing instrument is a visible error even for an otherwise valid movement", () => {
+  const rows = parseIsyBankOperations(workbook([headers, ["06/10/2026", "TEST", "Synthetic", "", "", "", "EUR", -10]]))!;
+  assert.equal(rows[0].source_instrument, null);
+  assert.equal(rows[0].status, "error");
 });
