@@ -10,7 +10,7 @@ export type BankImportDetection = { parserKey: string; providerLabel: string; co
 
 export function detectBankImport(workbook: XLSX.WorkBook): BankImportDetection {
   const providers = [
-    { parserKey: ISYBANK_OPERATIONS_PARSER_KEY, providerLabel: "IsyBank", compatibleAccountType: "checking" as const, parse: parseIsyBankOperations },
+    { parserKey: ISYBANK_OPERATIONS_PARSER_KEY, providerLabel: "IsyBank", compatibleAccountType: null, parse: parseIsyBankOperations },
     { parserKey: ISYBANK_PARSER_KEY, providerLabel: "IsyBank", compatibleAccountType: "checking" as const, parse: parseIsyBank },
     { parserKey: AMERICAN_EXPRESS_PARSER_KEY, providerLabel: "American Express", compatibleAccountType: "credit_card" as const, parse: parseAmericanExpress },
   ];

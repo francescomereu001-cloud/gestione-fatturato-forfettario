@@ -13,10 +13,16 @@ export type ImportBatch = {
 };
 
 export type ImportRow = {
+  source_instrument?: string | null; target_account_id?: string | null;
   id?: string; user_id?: string; batch_id?: string; row_index: number;
   transaction_date: string | null; booking_date: string | null; amount: number | null;
   description: string | null; merchant: string | null; external_id: string | null;
   dedupe_fingerprint: string | null; suggested_transaction_type: TransactionType | null;
   suggested_category_id: string | null; status: ImportRowStatus;
   matched_transaction_id?: string | null; raw_data: Record<string, unknown>;
+};
+
+export type ImportAccountMapping = {
+  id?: string; user_id: string; parser_key: string; source_instrument: string;
+  account_id: string; created_at?: string; updated_at?: string;
 };

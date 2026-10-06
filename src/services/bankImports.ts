@@ -26,9 +26,16 @@ export function transferTypeForAccounts(first: AccountType, second: AccountType)
   return first === "broker" || second === "broker" ? "investment_transfer" : "internal_transfer";
 }
 
-export function classifyDuplicate(row: ImportRow, externalIds: Set<string>, fingerprints: Set<string>): ImportRow["status"] {
+export function classifyDuplicate(row: ImportRow, externalIds: Set<string>, fingerprints: Map<string, number>): ImportRow["status"] {
+  if (row.status !== "ready") return row.status;
   if (row.external_id) return externalIds.has(row.external_id) ? "duplicate" : row.status;
-  if (row.dedupe_fingerprint && fingerprints.has(row.dedupe_fingerprint)) return "possible_duplicate";
+  if (row.dedupe_fingerprint) {
+    const remaining = fingerprints.get(row.dedupe_fingerprint) ?? 0;
+    if (remaining > 0) {
+      fingerprints.set(row.dedupe_fingerprint, remaining - 1);
+      return "possible_duplicate";
+    }
+  }
   return row.status;
 }
 
@@ -48,6 +55,9 @@ function errorMessage(error: unknown): string {
 export async function createImportPreview(
   client: SupabaseClient, userId: string, accountId: string, file: File, rows: ImportRow[], fileData: ArrayBuffer, parserKey: string,
 ): Promise<string> {
+  if (parserKey === "isybank_operations_v1" && rows.some((row) => row.status === "ready" && (!row.source_instrument || !row.target_account_id))) {
+    throw new Error("Ogni movimento IsyBank deve avere uno strumento e un account associato prima della preview.");
+  }
   const source_format = file.name.toLocaleLowerCase().endsWith(".csv") ? "csv" : "xlsx";
   const file_hash = await sha256(fileData);
   const previousBatch = await client.from("import_batches").select("id").eq("user_id", userId).eq("account_id", accountId).eq("file_hash", file_hash).neq("status", "cancelled").limit(1);
@@ -61,30 +71,33 @@ export async function createImportPreview(
   if (batchError || !batch) throw batchError ?? new Error("Batch import non creato.");
 
   try {
-    const externalIds = [...new Set(rows.flatMap((row) => row.external_id ? [row.external_id] : []))];
-    const fingerprints = [...new Set(rows.flatMap((row) => row.dedupe_fingerprint ? [row.dedupe_fingerprint] : []))];
-    const duplicateIds = new Set<string>();
-    const duplicateFingerprints = new Set<string>();
-
-    for (const values of chunkValues(externalIds)) {
-      const result = await client.from("transactions").select("id,external_id").eq("user_id", userId).eq("account_id", accountId).eq("source", "bank_import").in("external_id", values);
-      if (result.error) throw result.error;
-      for (const existing of result.data ?? []) if (existing.external_id) duplicateIds.add(existing.external_id);
+    // Query one account at a time; the server aggregates history before API row limits.
+    const staged: ImportRow[] = [];
+    const accountIds = [...new Set(rows.map((row) => row.target_account_id ?? accountId))];
+    for (const targetAccountId of accountIds) {
+      const accountRows = rows.filter((row) => (row.target_account_id ?? accountId) === targetAccountId);
+      const externalIds = [...new Set(accountRows.flatMap((row) => row.external_id ? [row.external_id] : []))];
+      const fingerprints = [...new Set(accountRows.flatMap((row) => row.dedupe_fingerprint ? [row.dedupe_fingerprint] : []))];
+      const duplicateIds = new Set<string>();
+      const duplicateFingerprints = new Map<string, number>();
+      for (const values of chunkValues(externalIds)) {
+        const result = await client.rpc("import_dedup_history", { target_account: targetAccountId, external_ids: values, fingerprints: [] });
+        if (result.error) throw result.error;
+        for (const existing of result.data ?? []) if (existing.external_id) duplicateIds.add(existing.external_id);
+      }
+      for (const values of chunkValues(fingerprints)) {
+        const result = await client.rpc("import_dedup_history", { target_account: targetAccountId, external_ids: [], fingerprints: values });
+        if (result.error) throw result.error;
+        for (const existing of result.data ?? []) if (existing.dedupe_fingerprint) duplicateFingerprints.set(existing.dedupe_fingerprint, Number(existing.occurrences));
+      }
+      for (const row of accountRows) {
+        const status = classifyDuplicate(row, duplicateIds, duplicateFingerprints);
+        // Strong provider IDs are unique; weak fingerprints do not suppress siblings.
+        if (row.status === "ready" && row.external_id) duplicateIds.add(row.external_id);
+        staged.push({ ...row, user_id: userId, batch_id: batch.id, status });
+      }
     }
-    for (const values of chunkValues(fingerprints)) {
-      const result = await client.from("import_rows").select("dedupe_fingerprint,import_batches!inner(account_id)").eq("user_id", userId).eq("import_batches.account_id", accountId).in("dedupe_fingerprint", values).in("status", ["imported", "duplicate"]);
-      if (result.error) throw result.error;
-      for (const existing of result.data ?? []) if (existing.dedupe_fingerprint) duplicateFingerprints.add(existing.dedupe_fingerprint);
-    }
-
-    const seenExternalIds = new Set(duplicateIds);
-    const seenFingerprints = new Set(duplicateFingerprints);
-    const staged = rows.map((row) => {
-      const status = classifyDuplicate(row, seenExternalIds, seenFingerprints);
-      if (row.external_id) seenExternalIds.add(row.external_id);
-      if (row.dedupe_fingerprint) seenFingerprints.add(row.dedupe_fingerprint);
-      return { ...row, user_id: userId, batch_id: batch.id, status };
-    });
+    staged.sort((first, second) => first.row_index - second.row_index);
 
     let persistedCount = 0;
     for (const chunk of chunkValues(staged)) {
