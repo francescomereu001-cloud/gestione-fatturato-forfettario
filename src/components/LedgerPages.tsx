@@ -5,6 +5,7 @@ import {
   accountBalance,
   totalLiquidity,
 } from "../domain/accounts/calculations";
+import { filterTransactionsByPeriod, transactionPeriod, unclassifiedCount, type PeriodPreset } from "../domain/transactions/dates";
 import { cashflowSummary } from "../domain/transactions/calculations";
 import {
   accountPayload,
@@ -306,6 +307,15 @@ export function TransactionsPage({
   const [accountFilter, setAccountFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
   const [classificationFilter, setClassificationFilter] = useState("");
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>("this_month");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+  const period = transactionPeriod(periodPreset, new Date(), dateFrom, dateTo);
+  const { from, to, error: periodError } = period;
+  const periodTransactions = useMemo(
+    () => filterTransactionsByPeriod(ledger.transactions, { from, to, error: periodError }),
+    [ledger.transactions, from, to, periodError],
+  );
   const [message, setMessage] = useState("");
   const [saveAsRule, setSaveAsRule] = useState(false);
   const [suggestedRule, setSuggestedRule] = useState<ClassificationRule | null>(
@@ -313,7 +323,7 @@ export function TransactionsPage({
   );
   const shown = useMemo(
     () =>
-      ledger.transactions.filter(
+      periodTransactions.filter(
         (item) =>
           (!accountFilter || item.account_id === accountFilter) &&
           (!typeFilter || item.transaction_type === typeFilter) &&
@@ -329,9 +339,10 @@ export function TransactionsPage({
             (classificationFilter === "transfer" &&
               item.classification_method === "transfer_match")),
       ),
-    [ledger.transactions, accountFilter, typeFilter, classificationFilter],
+    [periodTransactions, accountFilter, typeFilter, classificationFilter],
   );
   const summary = cashflowSummary(shown);
+  const residualCount = unclassifiedCount(periodTransactions.filter((item) => !accountFilter || item.account_id === accountFilter));
   const save = async () => {
     const payload = transactionPayload(form, userId);
     const query = form.id
@@ -432,11 +443,32 @@ export function TransactionsPage({
           {message}
         </div>
       )}
-      <div className="cards mini">
-        <StatCard title="Entrate" value={euro(summary.income)} />
-        <StatCard title="Uscite economiche" value={euro(summary.expenses)} />
-        <StatCard title="Cashflow" value={euro(summary.cashflow)} />
+      <div className="filterBar transactionFilters">
+        <label className="field">
+          Periodo
+          <select value={periodPreset} onChange={(event) => setPeriodPreset(event.target.value as PeriodPreset)}>
+            <option value="this_month">Questo mese</option>
+            <option value="last_month">Mese scorso</option>
+            <option value="this_year">Anno corrente</option>
+            <option value="all">Tutto</option>
+            <option value="custom">Personalizzato</option>
+          </select>
+        </label>
+        {periodPreset === "custom" && <>
+          <label className="field">Data da<input type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></label>
+          <label className="field">Data a<input type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></label>
+        </>}
       </div>
+      {period.error && <div className="notice" role="alert">{period.error}</div>}
+      <div className="cards mini">
+        <StatCard title="Entrate del periodo" value={euro(summary.income)} />
+        <StatCard title="Uscite del periodo" value={euro(summary.expenses)} />
+        <StatCard title="Cashflow economico del periodo" value={euro(summary.cashflow)} />
+      </div>
+      <p>Entrate meno uscite economiche nel periodo selezionato. I trasferimenti tra tuoi conti non incidono sul cashflow.</p>
+      {residualCount > 0 && <div className="notice" role="status">
+        {residualCount} movimenti del periodo devono ancora essere classificati. Il cashflow economico potrebbe essere incompleto.
+      </div>}
       {ledger.error && (
         <div className="notice" role="alert">
           {ledger.error}

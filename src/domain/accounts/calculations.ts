@@ -1,10 +1,11 @@
+import { effectiveTransactionDate } from "../transactions/dates.ts";
 import type { Account, LedgerTransaction } from "../../types/ledger.ts";
 
 export function accountBalance(account: Account, transactions: LedgerTransaction[]): number {
   return transactions
     .filter((transaction) => transaction.account_id === account.id
       && transaction.reconciliation_status !== "ignored"
-      && (!account.balance_as_of || (transaction.booking_date ?? transaction.transaction_date) > account.balance_as_of))
+      && (!account.balance_as_of || effectiveTransactionDate(transaction) > account.balance_as_of))
     .reduce((balance, transaction) => balance + Number(transaction.amount), Number(account.opening_balance));
 }
 

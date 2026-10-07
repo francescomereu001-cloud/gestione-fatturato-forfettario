@@ -110,3 +110,16 @@ test("missing instrument is a visible error even for an otherwise valid movement
   assert.equal(rows[0].source_instrument, null);
   assert.equal(rows[0].status, "error");
 });
+
+for (const [booking, expected] of [["08/10/2026", "2026-10-08"], ["", null], ["non valida", null], ["31/02/2026", null], ["07/10/2026", "2026-10-07"], [46286, "2026-09-21"]] as const) {
+  test(`Contabilizzazione ${String(booking)} is optional and normalized independently`, () => {
+    const source = movement("07/10/2026", -100);
+    source[4] = booking;
+    const [row] = parseIsyBankOperations(workbook([headers, source]))!;
+    assert.equal(row.transaction_date, "2026-10-07");
+    assert.equal(row.booking_date, expected);
+    assert.equal(row.status, "ready");
+    assert.equal(row.amount, -100);
+    assert.equal(row.dedupe_fingerprint, fingerprint(row));
+  });
+}
