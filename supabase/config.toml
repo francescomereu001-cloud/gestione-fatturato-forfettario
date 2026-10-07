@@ -1,0 +1,4 @@
+# Deployment is explicit; no linked production project or automatic migrations.
+project_id = "financialmind"
+[functions.classify-residuals]
+verify_jwt = true

@@ -160,7 +160,7 @@ export function ClassificationRules({
                 ...form,
                 match_field: e.target
                   .value as ClassificationRule["match_field"],
-                match_operator: e.target.value.startsWith("provider_")
+                match_operator: (e.target.value.startsWith("provider_") || e.target.value === "merchant_fingerprint")
                   ? "exact"
                   : form.match_operator,
               })
@@ -171,6 +171,13 @@ export function ClassificationRules({
             ))}
           </select>
         </label>
+        {form.match_field === "merchant_fingerprint" && <label className="field">
+          Tipo conto per memoria merchant
+          <select value={form.memory_account_type ?? ""} onChange={e => setForm({ ...form, memory_account_type: e.target.value })}>
+            <option value="">Seleziona</option>
+            {["checking", "savings", "credit_card", "broker", "cash", "technical", "other"].map(type => <option key={type}>{type}</option>)}
+          </select>
+        </label>}
         <label className="field">
           Operatore
           <select

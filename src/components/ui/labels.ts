@@ -32,6 +32,8 @@ export const reconciliationLabels: Record<ReconciliationStatus, string> = {
 export const classificationLabels: Record<ClassificationMethod, string> = {
   manual: "Manuale",
   user_rule: "Regola personale",
+  merchant_memory: "Memoria merchant",
+  ai_suggestion: "Suggerimento AI",
   provider_rule: "Automatico",
   transfer_match: "Trasferimento riconciliato",
 };
