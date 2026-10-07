@@ -19,7 +19,7 @@ const fieldLabels: Record<string, string> = {
   activity_start_date: "Data inizio attività", parameter_period: "Periodo dei parametri previdenziali", invoice_semantics: "Semantica lordo / ENASARCO / netto",
   enasarco_treatment: "Trattamento ENASARCO", source_note: "Fonte / note sui parametri", liability_schedule_verification: "Verifica saldi precedenti e scadenze/acconti",
   social_threshold_order: "Ordine minimale, prima fascia e massimale", activity_period_parameters: "Parametri espliciti per attività svolta solo in parte dell’anno",
-  unsupported_separate_reduction: "La gestione separata richiede riduzione pari a zero", invoice_cash_dates_or_amount_semantics: "Date incasso e importi delle fatture da verificare",
+  unsupported_separate_reduction: "La gestione separata richiede riduzione pari a zero", invoice_cash_dates_or_amount_semantics: "Date documento e importi delle fatture da verificare",
   unallocated_tax_payments: "Competenza e tipo degli F24 non attribuiti", payment_dates_or_amounts: "Date e importi dei pagamenti da verificare",
   other_contribution_deduction_note: "Nota sugli altri contributi deducibili per evitare doppio ENASARCO", income_outside_activity_period: "Incassi fuori dal periodo di attività da verificare",
 };
@@ -43,9 +43,9 @@ export function FiscalSummaryPanel({ summary, error = "", loading = false }: { s
     {summary.warnings.includes("profile_not_verified") && <p className="notice">Profilo non verificato: i parametri restano una stima.</p>}
     <div className="cards"><StatCard title="Tax Reserve richiesta" value={fiscalMoney(summary.required_tax_reserve)} /><StatCard title="Reddito forfettario" value={fiscalMoney(summary.forfettario_income)} /><StatCard title="Imposta sostitutiva stimata" value={fiscalMoney(summary.substitute_tax_due_estimated)} /></div>
     <details><summary>Dettaglio della proiezione fiscale e dei versamenti</summary><div className="cards mini">{cards.map(([title, value]) => <StatCard key={title} title={title} value={fiscalMoney(value)} />)}</div></details>
-    <p>Fatture emesse: {fiscalMoney(summary.revenue_invoiced)} · Denaro incassato al netto delle trattenute: {fiscalMoney(summary.revenue_collected)} · Crediti secondo la policy: {fiscalMoney(summary.receivables_uncollected)}</p>
+    <p>Fatture emesse: {fiscalMoney(summary.revenue_invoiced)} · Denaro incassato al netto delle trattenute: {fiscalMoney(summary.revenue_collected)}</p>
     <p>ENASARCO già trattenuto: {fiscalMoney(summary.enasarco_withheld)} · Quota deducibile configurata: {fiscalMoney(summary.deductible_enasarco_withheld)}. Le trattenute non vengono accantonate una seconda volta.</p>
-    <p>F24 non attribuiti: {fiscalMoney(summary.unallocated_payments)} ({summary.unallocated_payment_count}). Fondo fiscale riservato e differenza da colmare: non disponibili.</p>
+    <p>F24 non attribuiti: {fiscalMoney(summary.unallocated_payments)} ({summary.unallocated_payment_count}). Verifica competenza e tipo per completare la proiezione.</p>
     {summary.schedule.length > 0 && <div className="rows"><h4>Obbligazioni fiscali e previdenziali</h4>{summary.schedule.map(row => <div className="row" key={row.key}>
       <span>{row.description} · competenza {row.tax_year} · {fiscalPaymentLabels[row.payment_kind]} · {row.due_date || "Data non definita"} <Badge variant={row.status === "confirmed" ? "success" : "warning"}>{statusLabels[row.status]}</Badge></span>
       <span>{fiscalMoney(row.remaining)} da coprire · {fiscalMoney(row.paid)} coperti</span>

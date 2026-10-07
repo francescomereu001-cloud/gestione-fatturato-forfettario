@@ -37,7 +37,7 @@ export function FiscalPaymentAllocations({ client, userId, year, payments, onSav
     } catch (reason) { setMessage(serverErrorMessage(reason)); } finally { setBusy(false); }
   };
   const social = allocation.fiscal_payment_kind && ["inps_minimum", "inps_balance", "inps_advance", "other_contributions"].includes(allocation.fiscal_payment_kind);
-  return <section className="panel" aria-busy={busy}><h3>Attribuzione F24 per competenza</h3><p>L’anno di registrazione legacy non determina la competenza. Attribuisci solo i dati verificati; un pagamento può saldare un anno diverso da quello in cui è stato versato.</p>
+  return <section className="panel" aria-busy={busy}><h3>Attribuzione F24 per competenza</h3><p>La data di versamento può differire dall’anno di competenza. Attribuisci solo i dati verificati; un pagamento può saldare un anno diverso da quello in cui è stato versato.</p>
     {message && <p className="notice" role="status">{message}</p>}
     {payments.map(payment => <div className="row" key={payment.id}><span>{payment.data} · {payment.descrizione} · {fiscalMoney(payment.importo)} <Badge variant={payment.fiscal_allocation_status === "allocated" ? "success" : "warning"}>{payment.fiscal_allocation_status === "allocated" ? `Competenza ${payment.fiscal_tax_year} · ${fiscalPaymentLabels[payment.fiscal_payment_kind!]}` : "Non attribuito"}</Badge></span><Button variant="ghost" disabled={busy} onClick={() => choose(payment)}>Attribuisci {payment.descrizione || payment.id}</Button></div>)}
     {selected && <><h4>{selected.descrizione}</h4><div className="formGrid">
