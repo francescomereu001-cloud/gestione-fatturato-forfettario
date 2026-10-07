@@ -13,4 +13,4 @@ export type ClassificationRule = {
   target_merchant: string | null; created_at?: string; updated_at?: string;
 };
 
-export type ClassificationResult = { classified_count: number; transfer_count: number; unclassified_count: number };
+export type ClassificationResult = { classified_count: number; transfer_count: number; unclassified_count: number; categorized_count: number; uncategorized_count: number; total_transfer_count: number };
