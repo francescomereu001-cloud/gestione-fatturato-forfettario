@@ -1,3 +1,4 @@
+import type { FiscalAllocation } from "./fiscal";
 export type Invoice = {
   id?: string;
   user_id?: string;
@@ -15,7 +16,7 @@ export type Invoice = {
   note?: string;
 };
 
-export type TaxPayment = {
+export type TaxPayment = Partial<FiscalAllocation> & {
   id?: string;
   user_id?: string;
   anno: number;

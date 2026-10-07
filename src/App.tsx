@@ -1,16 +1,14 @@
+import { fiscalMoney } from "./components/ui/fiscalLabels";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import {
   Euro,
-  TrendingUp,
   Receipt,
   PiggyBank,
-  CalendarDays,
   Upload,
   Plus,
   Trash2,
   Save,
-  Wallet,
   AlertTriangle,
 } from "lucide-react";
 import {
@@ -23,7 +21,10 @@ import {
   CartesianGrid,
 } from "recharts";
 import * as XLSX from "xlsx";
-import { calculateTaxSummary, defaultTaxSettings } from "./domain/calculations/tax";
+import { loadFinancialTaxSummary } from "./services/fiscal";
+import type { FinancialTaxSummary } from "./types/fiscal";
+import { FiscalPage, FiscalSummaryPanel } from "./components/FiscalPage";
+import { FiscalPaymentAllocations } from "./components/FiscalPaymentAllocations";
 import { ownedBy, sessionGateState } from "./auth/ownership";
 import { parseInvoiceWorkbook } from "./import/parsers/invoiceExcel";
 import { supabase, supabaseConfigError } from "./supabase";
@@ -105,6 +106,8 @@ function AuthStatus({ message }: { message: string }) {
 function PrivateApp({ session }: { session: Session }) {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [payments, setPayments] = useState<TaxPayment[]>([]);
+  const [fiscalSummary, setFiscalSummary] = useState<FinancialTaxSummary | null>(null);
+  const [fiscalError, setFiscalError] = useState("");
   const [settings, setSettings] = useState<TaxSettings[]>([]);
   const [selectedYear, setSelectedYear] = useState(currentYear);
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -143,10 +146,11 @@ function PrivateApp({ session }: { session: Session }) {
     setLoading(true);
     setErrorMessage("");
 
-    const [inv, pay, set] = await Promise.all([
+    const [inv, pay, set, fiscal] = await Promise.all([
       supabase.from("invoices").select("*").eq("user_id", session.user.id).order("data", { ascending: false }),
       supabase.from("tax_payments").select("*").eq("user_id", session.user.id).order("data", { ascending: false }),
       supabase.from("tax_settings").select("*").eq("user_id", session.user.id).order("anno", { ascending: false }),
+      loadFinancialTaxSummary(supabase, selectedYear).then(data => ({ data, error: "" })).catch(() => ({ data: null, error: "Proiezione fiscale non disponibile. Fatture e pagamenti restano consultabili." })),
     ]);
 
     if (inv.error || pay.error || set.error) {
@@ -157,27 +161,24 @@ function PrivateApp({ session }: { session: Session }) {
       return;
     }
 
+    setFiscalSummary(fiscal.data);
+    setFiscalError(fiscal.error);
     setInvoices(inv.data ?? []);
     setPayments(pay.data ?? []);
     setSettings(set.data ?? []);
     setLoading(false);
-  }, [session.user.id]);
+  }, [session.user.id, selectedYear]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadAll();
   }, [loadAll]);
 
-  const yearSettings =
-    settings.find((s) => s.anno === selectedYear) || defaultTaxSettings(selectedYear);
+  const yearSettings = settings.find((s) => s.anno === selectedYear);
+  const fiscal = fiscalSummary?.tax_year === selectedYear ? fiscalSummary : null;
 
   const invoicesYear = invoices.filter((i) => Number(i.anno) === selectedYear);
   const paymentsYear = payments.filter((p) => Number(p.anno) === selectedYear);
-
-  const stats = useMemo(
-    () => calculateTaxSummary(invoicesYear, paymentsYear, yearSettings),
-    [invoicesYear, paymentsYear, yearSettings],
-  );
 
   const monthlyData = useMemo(() => {
     const months = Array.from({ length: 12 }, (_, i) => ({
@@ -197,12 +198,14 @@ function PrivateApp({ session }: { session: Session }) {
   const years = useMemo(() => {
     const all = new Set([
       currentYear,
+      ...Array.from({ length: 6 }, (_, i) => currentYear - 4 + i),
+      ...payments.map(p => Number(p.fiscal_tax_year)).filter(Boolean),
       ...invoices.map((i) => Number(i.anno)).filter(Boolean),
       ...settings.map((s) => Number(s.anno)).filter(Boolean),
     ]);
 
     return Array.from(all).sort((a, b) => b - a);
-  }, [invoices, settings]);
+  }, [invoices, settings, payments]);
 
   const saveInvoice = async () => {
     if (!supabase) return;
@@ -263,7 +266,7 @@ function PrivateApp({ session }: { session: Session }) {
   };
 
   const saveSettings = async () => {
-    if (!supabase) return;
+    if (!supabase || !yearSettings) return;
     const payload = ownedBy({ ...yearSettings, anno: selectedYear }, session.user.id);
     const query = yearSettings.id
       ? supabase.from("tax_settings").update(payload).eq("id", yearSettings.id).eq("user_id", session.user.id)
@@ -284,7 +287,7 @@ function PrivateApp({ session }: { session: Session }) {
         )
       );
     } else {
-      setSettings([...settings, { ...defaultTaxSettings(selectedYear), [field]: value }]);
+      return;
     }
   };
 
@@ -326,61 +329,16 @@ function PrivateApp({ session }: { session: Session }) {
         {activeTab === "dashboard" && (
           <>
             <section className="cards">
-              <Card icon={<Euro />} title="Fatturato anno" value={euro(stats.fatturato)} />
-              <Card icon={<Receipt />} title="Incassato" value={euro(stats.incassato)} />
-              <Card icon={<PiggyBank />} title="Tasse stimate" value={euro(stats.tasseTotali)} />
-              <Card
-                icon={<AlertTriangle />}
-                title="Residuo da pagare"
-                value={euro(stats.residuo)}
-                danger={stats.residuo > 0}
-              />
+              <Card icon={<Euro />} title="Fatturato anno" value={fiscalMoney(fiscal?.revenue_invoiced)} />
+              <Card icon={<Receipt />} title="Incassato netto" value={fiscalMoney(fiscal?.revenue_collected)} />
+              <Card icon={<PiggyBank />} title="Imposta sostitutiva stimata" value={fiscalMoney(fiscal?.substitute_tax_due_estimated)} />
+              <Card icon={<AlertTriangle />} title="Tax Reserve richiesta" value={fiscalMoney(fiscal?.required_tax_reserve)} danger={(fiscal?.required_tax_reserve ?? 0) > 0} />
             </section>
-
-            <section className="grid2">
-              <div className="panel">
-                <h3>Andamento mensile fatturato</h3>
-                <ResponsiveContainer width="100%" height={280}>
-                  <BarChart data={monthlyData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="mese" />
-                    <YAxis />
-                    <Tooltip formatter={(v) => euro(Number(v ?? 0))} />
-                    <Bar dataKey="fatturato" fill="var(--fm-primary)" radius={[8, 8, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-
-              <div className="panel">
-                <h3>Previsione fiscale {selectedYear}</h3>
-                <div className="rows">
-                  <Row label="Fatturato lordo" value={euro(stats.fatturato)} />
-                  <Row label="Imponibile forfettario" value={euro(stats.imponibile)} />
-                  <Row label="Imposta sostitutiva" value={euro(stats.imposta)} />
-                  <Row label="INPS stimata" value={euro(stats.inps)} />
-                  <Row label="F24 già inseriti" value={euro(stats.pagato)} />
-                  <Row label="Residuo stimato" value={euro(stats.residuo)} strong />
-                  <Row
-                    label="Accantonamento consigliato"
-                    value={`${stats.accantonamentoConsigliato.toFixed(1)}%`}
-                    strong
-                  />
-                </div>
-              </div>
-            </section>
-
             <section className="panel">
-              <h3>Riepilogo fatture e tasse</h3>
-              <div className="cards mini">
-                <Card icon={<Wallet />} title="Netto fatture" value={euro(stats.netto)} />
-                <Card icon={<CalendarDays />} title="Da incassare" value={euro(stats.daIncassare)} />
-                <Card
-                  icon={<TrendingUp />}
-                  title="Disponibile post tasse"
-                  value={euro(stats.disponibilitaStimata)}
-                />
-              </div>
+              <h3>Andamento mensile fatturato emesso</h3>
+              <ResponsiveContainer width="100%" height={280}><BarChart data={monthlyData}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="mese" /><YAxis /><Tooltip formatter={(v) => euro(Number(v ?? 0))} /><Bar dataKey="fatturato" fill="var(--fm-primary)" radius={[8, 8, 0, 0]} /></BarChart></ResponsiveContainer>
             </section>
+            <FiscalSummaryPanel summary={fiscal} error={fiscalError} loading={loading} />
           </>
         )}
 
@@ -441,29 +399,17 @@ function PrivateApp({ session }: { session: Session }) {
           </section>
         )}
 
-        {activeTab === "fiscale" && (
-          <section className="panel">
-            <h3>Impostazioni fiscali {selectedYear}</h3>
-
-            <div className="formGrid">
-              <Input label="Aliquota imposta sostitutiva %" type="number" value={yearSettings.aliquota_imposta} onChange={(v) => updateSetting("aliquota_imposta", Number(v))} />
-              <Input label="Coefficiente redditività %" type="number" value={yearSettings.coefficiente_redditivita} onChange={(v) => updateSetting("coefficiente_redditivita", Number(v))} />
-              <Input label="Aliquota INPS %" type="number" value={yearSettings.aliquota_inps} onChange={(v) => updateSetting("aliquota_inps", Number(v))} />
-              <Input label="Minimale INPS" type="number" value={yearSettings.minimale_inps} onChange={(v) => updateSetting("minimale_inps", Number(v))} />
-            </div>
-
-            <button className="primary" onClick={saveSettings}>
-              <Save size={18} /> Salva impostazioni fiscali
-            </button>
-
-            <div className="notice">
-              Per il 2025 puoi lasciare imposta al 5%. Per il 2026 puoi impostare il 15%.
-              I parametri restano modificabili perché INPS e regole fiscali possono cambiare.
-            </div>
-          </section>
-        )}
+        {activeTab === "fiscale" && supabase && <FiscalPage key={`${session.user.id}:${selectedYear}`} client={supabase} userId={session.user.id} year={selectedYear}
+          summary={fiscal} error={fiscalError} loading={loading} legacySettings={yearSettings} onSaved={loadAll}
+          legacyEditor={yearSettings && <><div className="formGrid">
+            <Input label="Aliquota imposta legacy %" type="number" value={yearSettings.aliquota_imposta} onChange={v => updateSetting("aliquota_imposta", Number(v))} />
+            <Input label="Coefficiente legacy %" type="number" value={yearSettings.coefficiente_redditivita} onChange={v => updateSetting("coefficiente_redditivita", Number(v))} />
+            <Input label="Aliquota INPS legacy %" type="number" value={yearSettings.aliquota_inps} onChange={v => updateSetting("aliquota_inps", Number(v))} />
+            <Input label="Minimale INPS legacy" type="number" value={yearSettings.minimale_inps} onChange={v => updateSetting("minimale_inps", Number(v))} />
+          </div><button className="secondary" onClick={() => void saveSettings()}>Salva solo impostazioni legacy</button></>} />}
 
         {activeTab === "pagamenti" && (
+          <>
           <section className="panel">
             <h3>F24 e pagamenti fiscali</h3>
 
@@ -502,6 +448,8 @@ function PrivateApp({ session }: { session: Session }) {
               ))}
             </div>
           </section>
+          {supabase && <FiscalPaymentAllocations key={`${session.user.id}:${selectedYear}`} client={supabase} userId={session.user.id} year={selectedYear} payments={payments} onSaved={loadAll} />}
+          </>
         )}
 
         {activeTab === "import" && (
@@ -530,16 +478,6 @@ function PrivateApp({ session }: { session: Session }) {
           </section>
         )}
     </AppShell>
-  );
-}
-
-type RowProps = { label: string; value: string; strong?: boolean };
-function Row({ label, value, strong }: RowProps) {
-  return (
-    <div className={`row ${strong ? "strong" : ""}`}>
-      <span>{label}</span>
-      <b>{value}</b>
-    </div>
   );
 }
 
