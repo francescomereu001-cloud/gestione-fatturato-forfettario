@@ -382,3 +382,8 @@ textarea {
 .historyTable { display: grid; gap: 8px; overflow-x: auto; }
 .historyRow { min-width: 1050px; display: grid; grid-template-columns: 1.5fr 1.2fr repeat(6, .75fr) auto; gap: 10px; align-items: center; padding: 12px; border-radius: 14px; background: rgba(30, 41, 59, .68); }
 .historyRow small { display: block; color: #94a3b8; margin-top: 4px; }
+
+.reviewGroups { display: grid; gap: 12px; margin-top: 16px; }
+.reviewGroup { display: flex; flex-direction: column; gap: 6px; text-align: left; padding: 16px; border: 1px solid #dbe2eb; border-radius: 12px; background: #fff; color: inherit; overflow-wrap: anywhere; }
+.reviewGroup.selected { border-color: #2563eb; outline: 2px solid #2563eb; }
+.reviewGroup small { font-weight: normal; color: #64748b; }

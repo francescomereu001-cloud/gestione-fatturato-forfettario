@@ -34,6 +34,7 @@ import { supabase, supabaseConfigError } from "./supabase";
 import type { Invoice, TaxPayment, TaxSettings } from "./types/finance";
 import { AccountsPage, TransactionsPage } from "./components/LedgerPages";
 import { BankImportPage } from "./components/BankImportPage";
+import { ResidualReviewPage } from "./components/ResidualReviewPage";
 import "./App.css";
 
 const euro = (n: number) =>
@@ -118,6 +119,7 @@ function PrivateApp({ session }: { session: Session }) {
     ["dashboard", "Dashboard", BarChart3],
     ["accounts", "Accounts", Landmark],
     ["transactions", "Transactions", ArrowLeftRight],
+    ["residual-review", "Review Center", AlertTriangle],
     ["bank-import", "Import banca", Upload],
     ["fatture", "Fatture", Receipt],
     ["fiscale", "Fiscale", PiggyBank],
@@ -445,6 +447,7 @@ function PrivateApp({ session }: { session: Session }) {
 
         {activeTab === "accounts" && supabase && <AccountsPage client={supabase} userId={session.user.id} />}
         {activeTab === "transactions" && supabase && <TransactionsPage client={supabase} userId={session.user.id} />}
+        {activeTab === "residual-review" && supabase && <ResidualReviewPage client={supabase} userId={session.user.id} />}
         {activeTab === "bank-import" && supabase && <BankImportPage client={supabase} userId={session.user.id} />}
 
         {activeTab === "fatture" && (
