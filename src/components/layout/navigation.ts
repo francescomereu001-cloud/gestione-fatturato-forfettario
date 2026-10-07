@@ -40,10 +40,10 @@ export const navigationSections: Array<{ label: string; items: NavItem[] }> = [
   {
     label: "Income & Taxes",
     items: [
-      { id: "fatture", label: "Entrate", icon: ReceiptText },
-      { id: "fiscale", label: "Fiscale", icon: Landmark },
-      { id: "pagamenti", label: "F24 / Pagamenti", icon: Wallet },
-      { id: "import", label: "Import fatture Excel", icon: FileSpreadsheet },
+      { id: "fatture", label: "Income", icon: ReceiptText },
+      { id: "import", label: "Import Income", icon: FileSpreadsheet },
+      { id: "fiscale", label: "Taxes", icon: Landmark },
+      { id: "pagamenti", label: "Tax Payments / F24", icon: Wallet },
     ],
   },
   {

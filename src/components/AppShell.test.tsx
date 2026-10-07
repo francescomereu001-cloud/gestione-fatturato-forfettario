@@ -88,7 +88,7 @@ test("existing navigation still emits the original state-based tab IDs", () => {
   const view = shell((id) => tabs.push(id));
   fireEvent.click(view.getByRole("button", { name: "Conti" }));
   fireEvent.click(view.getByRole("button", { name: "Transazioni" }));
-  fireEvent.click(view.getByRole("button", { name: "Entrate" }));
+  fireEvent.click(view.getByRole("button", { name: "Income" }));
   assert.deepEqual(tabs, ["accounts", "transactions", "fatture"]);
 });
 

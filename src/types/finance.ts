@@ -7,7 +7,7 @@ export type Invoice = {
   cliente?: string;
   descrizione?: string;
   lordo?: number;
-  enasarco?: number;
+  enasarco?: number | null;
   netto?: number;
   incassata?: boolean;
   data_incasso?: string;

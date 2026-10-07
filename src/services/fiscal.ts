@@ -37,3 +37,12 @@ export async function saveFiscalAllocation(client: SupabaseClient, userId: strin
   }).eq("id", paymentId).eq("user_id", userId);
   if (error) throw error;
 }
+
+export async function loadTaxPayments(client: SupabaseClient, userId: string) {
+  const rows = [];
+  for (let start=0; ; start+=500) {
+    const {data,error}=await client.from('tax_payments').select('*').eq('user_id',userId).order('data',{ascending:false}).order('id').range(start,start+499);
+    if(error) throw error;rows.push(...(data??[]));if(!data || data.length<500)break;
+  }
+  return rows;
+}
