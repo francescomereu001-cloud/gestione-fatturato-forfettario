@@ -1,7 +1,7 @@
 export const accountTypes = ["checking", "savings", "credit_card", "broker", "cash", "technical", "other"] as const;
 export const transactionTypes = ["unclassified", "income", "expense", "internal_transfer", "investment_transfer", "debt_principal", "debt_interest", "refund", "adjustment"] as const;
 export const reconciliationStatuses = ["pending", "confirmed", "ignored"] as const;
-export const classificationMethods = ["provider_rule", "user_rule", "transfer_match", "manual"] as const;
+export const classificationMethods = ["provider_rule", "user_rule", "transfer_match", "manual", "merchant_memory", "ai_suggestion"] as const;
 
 export type AccountType = (typeof accountTypes)[number];
 export type TransactionType = (typeof transactionTypes)[number];

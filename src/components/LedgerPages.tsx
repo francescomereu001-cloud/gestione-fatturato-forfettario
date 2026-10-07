@@ -1,3 +1,4 @@
+import { rememberMerchant } from "../services/aiReview";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Plus, Save, Trash2, Landmark } from "lucide-react";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -317,6 +318,7 @@ export function TransactionsPage({
     [ledger.transactions, from, to, periodError],
   );
   const [message, setMessage] = useState("");
+  const [remembering, setRemembering] = useState(false);
   const [saveAsRule, setSaveAsRule] = useState(false);
   const [suggestedRule, setSuggestedRule] = useState<ClassificationRule | null>(
     null,
@@ -331,7 +333,7 @@ export function TransactionsPage({
             (classificationFilter === "unclassified" &&
               item.transaction_type === "unclassified") ||
             (classificationFilter === "automatic" &&
-              ["provider_rule", "user_rule"].includes(
+              ["provider_rule", "user_rule", "merchant_memory", "ai_suggestion"].includes(
                 item.classification_method ?? "",
               )) ||
             (classificationFilter === "manual" &&
@@ -385,6 +387,17 @@ export function TransactionsPage({
       setForm(blankTransaction());
       await ledger.reload();
     } else setMessage(error.message);
+  };
+  const confirmAndRemember = async () => {
+    if (!form.id || !form.category_id) return;
+    setRemembering(true);
+    try {
+      await rememberMerchant(client, form.id, form.transaction_type, form.category_id);
+      setMessage("Categoria confermata · Merchant ricordato per i movimenti futuri.");
+      setForm(blankTransaction()); await ledger.reload();
+    } catch (reason) {
+      setMessage(typeof reason === "object" && reason !== null && "message" in reason ? String(reason.message) : "Merchant non ricordato.");
+    } finally { setRemembering(false); }
   };
   const remove = async (item: LedgerTransaction) => {
     if (!item.id) return;
@@ -635,6 +648,9 @@ export function TransactionsPage({
             <Plus size={18} />
             {form.id ? "Aggiorna" : "Registra"}
           </button>
+          {form.id && ["expense", "income", "refund"].includes(form.transaction_type) && <button
+            className="secondary" disabled={remembering || !form.category_id || form.reconciliation_status === "ignored" || Boolean(form.transfer_group_id)}
+            onClick={() => void confirmAndRemember()}>{remembering ? "Memorizzazione…" : "Conferma categoria e ricorda merchant"}</button>}
         </div>
       </details>
       <div className="panel">

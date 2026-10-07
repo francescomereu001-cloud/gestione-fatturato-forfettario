@@ -1,3 +1,4 @@
+import { loadAISuggestions, decideAISuggestion, requestResidualAI, type AISuggestion } from "../services/aiReview";
 import { useCallback, useEffect, useState } from "react";
 import {
   ArrowRight,
@@ -55,6 +56,7 @@ export function ResidualReviewPage({
     total_groups: 0,
     unclassified_count: 0,
   });
+  const [suggestions, setSuggestions] = useState<AISuggestion[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<TransactionCategory[]>([]);
   const [grouping, setGrouping] =
@@ -71,11 +73,13 @@ export function ResidualReviewPage({
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const [next, options] = await Promise.all([
+      const [next, options, ai] = await Promise.all([
         loadResidualGroups(client, grouping, offset),
         loadReviewOptions(client, userId),
+        loadAISuggestions(client),
       ]);
       setPage(next);
+      setSuggestions(ai);
       setAccounts(options.accounts);
       setCategories(options.categories);
       setError("");
@@ -120,6 +124,20 @@ export function ResidualReviewPage({
       setBusy(false);
     }
   };
+  const aiAction = async (id?: string, action?: "approve" | "remember" | "reject") => {
+    setBusy(true); setError(""); setMessage("");
+    try {
+      if (id && action) {
+        await decideAISuggestion(client, id, action);
+        setMessage(action === "reject" ? "Suggerimento rifiutato" : action === "remember" ? "Decisione confermata · Merchant ricordato" : "Decisione confermata");
+      } else {
+        const result = await requestResidualAI(client);
+        setMessage(`${result.requested} movimenti analizzati · ${result.groups} merchant. Verifica le proposte qui sotto.`);
+      }
+      setSelected(null); await reload();
+    } catch (reason) { setError(serverErrorMessage(reason)); }
+    finally { setBusy(false); }
+  };
   const canSaveRule =
     selected?.parser_key &&
     selected[ruleField] &&
@@ -151,6 +169,23 @@ export function ResidualReviewPage({
           {message}
         </div>
       )}
+      <div className="panel">
+        <h2>Suggerimenti AI sui residui</h2>
+        <p className="muted">Prima si applicano le regole personali e la memoria merchant. Solo i residui idonei vengono analizzati dall’AI. Le proposte con confidenza media richiedono conferma.</p>
+        <Button variant="secondary" disabled={busy || loading} onClick={() => void aiAction()}>Analizza residui con AI</Button>
+        {suggestions.map(suggestion => <article className="reviewDecisionSummary" key={suggestion.id}>
+          <h3>{suggestion.merchant}</h3>
+          <p>{suggestion.description}</p>
+          <p>{transactionTypeLabels[suggestion.transaction_type]} · {suggestion.category}</p>
+          <Badge variant="warning">Da confermare · {Math.round(suggestion.confidence * 100)}%</Badge>
+          <p>{suggestion.reason}</p>
+          <div className="reviewActions">
+            <Button disabled={busy} onClick={() => void aiAction(suggestion.id, "approve")}>Approva</Button>
+            <Button variant="secondary" disabled={busy} onClick={() => void aiAction(suggestion.id, "remember")}>Approva e ricorda</Button>
+            <Button variant="ghost" disabled={busy} onClick={() => void aiAction(suggestion.id, "reject")}>Rifiuta</Button>
+          </div>
+        </article>)}
+      </div>
       <div className="reviewToolbar">
         <label className="field">
           Raggruppa per

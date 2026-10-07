@@ -1,10 +1,11 @@
 import type { TransactionType } from "./ledger.ts";
 
-export const matchFields = ["description", "merchant", "provider_category", "provider_operation", "provider_details"] as const;
+export const matchFields = ["description", "merchant", "provider_category", "provider_operation", "provider_details", "merchant_fingerprint"] as const;
 export const matchOperators = ["exact", "contains", "starts_with"] as const;
 export const amountDirections = ["any", "debit", "credit"] as const;
 
 export type ClassificationRule = {
+  memory_account_type?: string | null;
   id?: string; user_id?: string; name: string; priority: number; is_active: boolean;
   account_id: string | null; parser_key: string | null;
   match_field: (typeof matchFields)[number]; match_operator: (typeof matchOperators)[number];

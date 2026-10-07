@@ -10,6 +10,7 @@ import {
 } from "@testing-library/react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ResidualReviewPage } from "./ResidualReviewPage.tsx";
+import type { AISuggestion } from "../services/aiReview.ts";
 import type { ResidualGroup } from "../services/residualReview.ts";
 
 const dom = new JSDOM("<!doctype html><html><body></body></html>", {
@@ -44,7 +45,7 @@ const group: ResidualGroup = {
   transaction_ids: ["synthetic-a", "synthetic-b"],
   examples: ["Esempio uno", "Esempio due"],
 };
-function mockClient(selectedGroup = group, failure: string | null = null) {
+function mockClient(selectedGroup = group, failure: string | null = null, ai: AISuggestion[] = []) {
   const calls: Array<[string, Record<string, unknown>]> = [];
   let groups = [selectedGroup];
   const client = {
@@ -99,6 +100,11 @@ function mockClient(selectedGroup = group, failure: string | null = null) {
     }),
     rpc: async (name: string, args: Record<string, unknown>) => {
       calls.push([name, args]);
+      if (name === "pending_ai_suggestions") return { data: ai, error: null };
+      if (name === "review_ai_suggestion") {
+        if (failure) return { data: null, error: { message: failure } };
+        ai = []; return { data: null, error: null };
+      }
       if (name === "residual_review_groups")
         return {
           data: {
@@ -383,4 +389,36 @@ test("initial loading errors never report a completed review queue", async () =>
   );
   assert.ok(view.getByRole("heading", { name: "Movimenti non disponibili" }));
   assert.equal(view.queryByText("Tutto in ordine"), null);
+});
+
+const aiSuggestion: AISuggestion = { id: "synthetic-ai", transaction_id: "synthetic-tx", merchant: "Bistro Horizon", description: "Pagamento Bistro Horizon", transaction_type: "expense", category: "Ristorazione", confidence: .85, reason: "Merchant normalizzato" };
+for (const [label, action] of [["Approva", "approve"], ["Approva e ricorda", "remember"], ["Rifiuta", "reject"]] as const) {
+  test(`Review Center ${label} uses owner-scoped audited RPC and refreshes pending suggestions`, async () => {
+    const { client, calls } = mockClient(group, null, [aiSuggestion]);
+    const view = render(<ResidualReviewPage client={client} userId="synthetic-owner" />);
+    assert.ok(await view.findByText("Bistro Horizon"));
+    assert.ok(view.getByText(/85%/)); assert.ok(view.getByText(/Ristorazione/));
+    fireEvent.click(view.getByRole("button", { name: label }));
+    await waitFor(() => assert.deepEqual(calls.find(([name]) => name === "review_ai_suggestion"), ["review_ai_suggestion", { suggestion_id: "synthetic-ai", action }]));
+    await waitFor(() => assert.equal(view.queryByText("Bistro Horizon"), null));
+    assert.ok(view.getByRole("button", { name: /mittente sintetico/ }));
+  });
+}
+test("failed AI review preserves pending suggestion and ordinary residual review", async () => {
+  const { client } = mockClient(group, "transaction changed or protected", [aiSuggestion]);
+  const view = render(<ResidualReviewPage client={client} userId="synthetic-owner" />);
+  await view.findByText("Bistro Horizon");
+  fireEvent.click(view.getByRole("button", { name: "Approva" }));
+  await view.findByRole("alert");
+  assert.ok(view.getByText("Bistro Horizon")); assert.ok(view.getByRole("button", { name: /mittente sintetico/ }));
+});
+test("AI outage leaves regular review available", async () => {
+  const { client } = mockClient();
+  Object.assign(client, { functions: { invoke: async () => ({ data: null, error: new Error("outage") }) } });
+  const view = render(<ResidualReviewPage client={client} userId="synthetic-owner" />);
+  await view.findByRole("button", { name: /mittente sintetico/ });
+  fireEvent.click(view.getByRole("button", { name: "Analizza residui con AI" }));
+  const alert = await view.findByRole("alert");
+  assert.match(alert.textContent ?? "", /movimenti restano da verificare/);
+  assert.ok(view.getByRole("button", { name: /mittente sintetico/ }));
 });

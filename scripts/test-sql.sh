@@ -18,6 +18,10 @@ for migration in supabase/migrations/*.sql; do
     run_sql supabase/tests/pr6_upgrade_preservation.sql
     run_sql "$migration"
     run_sql supabase/tests/pr6_upgrade_verify.sql
+  elif [[ "$migration" == *pr9_smart_classification_engine.sql ]]; then
+    run_sql supabase/tests/pr9_upgrade_preservation.sql
+    run_sql "$migration"
+    run_sql supabase/tests/pr9_upgrade_verify.sql
   else
     run_sql "$migration"
   fi
@@ -25,3 +29,5 @@ done
 run_sql supabase/tests/pr4_4_multi_instrument.sql
 run_sql supabase/tests/pr5_provider_classification.sql
 run_sql supabase/tests/pr6_residual_review.sql
+
+run_sql supabase/tests/pr9_smart_classification.sql
