@@ -1,157 +1,802 @@
 import { useCallback, useEffect, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { PageHeader } from "./layout/PageHeader";
+import { EmptyState } from "./ui/EmptyState";
+import { transactionTypeLabels } from "./ui/labels";
 import { Upload } from "lucide-react";
 import * as XLSX from "xlsx";
-import { fingerprint, mappingFields, normalizeBankRows, readCsv, suggestColumnMapping, type ColumnMapping, type ReadBankFile } from "../import/parsers/bankStatement";
-import { detectBankImport, type BankImportDetection } from "../import/parsers/bankImportRegistry";
-import { cancelImportBatch, commitImportBatch, createImportPreview } from "../services/bankImports";
-import { detectedInstruments, instrumentAccountType, loadImportMappings, resolveInstrumentMappings, routeImportRows, saveImportMappings } from "../services/importRouting";
+import {
+  fingerprint,
+  mappingFields,
+  normalizeBankRows,
+  readCsv,
+  suggestColumnMapping,
+  type ColumnMapping,
+  type ReadBankFile,
+} from "../import/parsers/bankStatement";
+import {
+  detectBankImport,
+  type BankImportDetection,
+} from "../import/parsers/bankImportRegistry";
+import {
+  cancelImportBatch,
+  commitImportBatch,
+  createImportPreview,
+} from "../services/bankImports";
+import {
+  detectedInstruments,
+  instrumentAccountType,
+  loadImportMappings,
+  resolveInstrumentMappings,
+  routeImportRows,
+  saveImportMappings,
+} from "../services/importRouting";
 import { classifyTransactions } from "../services/classification";
 import type { ImportBatch, ImportRow, ImportRowStatus } from "../types/imports";
-import { transactionTypes, type Account, type TransactionCategory, type TransactionType } from "../types/ledger";
+import {
+  transactionTypes,
+  type Account,
+  type TransactionCategory,
+  type TransactionType,
+} from "../types/ledger";
 
 const mappingLabels: Record<(typeof mappingFields)[number], string> = {
-  transaction_date: "Data operazione", booking_date: "Data contabile", amount: "Importo singolo",
-  debit: "Addebito", credit: "Accredito", description: "Descrizione", merchant: "Controparte", external_id: "ID esterno",
+  transaction_date: "Data operazione",
+  booking_date: "Data contabile",
+  amount: "Importo singolo",
+  debit: "Addebito",
+  credit: "Accredito",
+  description: "Descrizione",
+  merchant: "Controparte",
+  external_id: "ID esterno",
 };
 
-type PendingFile = { file: File; data: ArrayBuffer; read: ReadBankFile; detection: BankImportDetection };
+type PendingFile = {
+  file: File;
+  data: ArrayBuffer;
+  read: ReadBankFile;
+  detection: BankImportDetection;
+};
 
-export function BankImportPage({ client, userId }: { client: SupabaseClient; userId: string }) {
-  const [accounts, setAccounts] = useState<Account[]>([]); const [categories, setCategories] = useState<TransactionCategory[]>([]);
-  const [history, setHistory] = useState<ImportBatch[]>([]); const [accountId, setAccountId] = useState("");
-  const [batch, setBatch] = useState<ImportBatch | null>(null); const [rows, setRows] = useState<ImportRow[]>([]);
-  const [instrumentSelections, setInstrumentSelections] = useState<Record<string, string>>({});
-  const [pending, setPending] = useState<PendingFile | null>(null); const [mapping, setMapping] = useState<ColumnMapping>({});
-  const [message, setMessage] = useState(""); const [busy, setBusy] = useState(false); const [busyMessage, setBusyMessage] = useState("");
+export function BankImportPage({
+  client,
+  userId,
+}: {
+  client: SupabaseClient;
+  userId: string;
+}) {
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [categories, setCategories] = useState<TransactionCategory[]>([]);
+  const [history, setHistory] = useState<ImportBatch[]>([]);
+  const [accountId, setAccountId] = useState("");
+  const [batch, setBatch] = useState<ImportBatch | null>(null);
+  const [rows, setRows] = useState<ImportRow[]>([]);
+  const [instrumentSelections, setInstrumentSelections] = useState<
+    Record<string, string>
+  >({});
+  const [pending, setPending] = useState<PendingFile | null>(null);
+  const [mapping, setMapping] = useState<ColumnMapping>({});
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [busyMessage, setBusyMessage] = useState("");
 
   const loadHistory = useCallback(async () => {
-    const result = await client.from("import_batches").select("*").eq("user_id", userId).order("created_at", { ascending: false });
+    const result = await client
+      .from("import_batches")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false });
     if (!result.error) setHistory((result.data ?? []) as ImportBatch[]);
   }, [client, userId]);
-  const loadBatch = useCallback(async (batchId: string) => {
-    const [batchResult, rowsResult] = await Promise.all([
-      client.from("import_batches").select("*").eq("id", batchId).eq("user_id", userId).single(),
-      client.from("import_rows").select("*").eq("batch_id", batchId).eq("user_id", userId).order("row_index"),
-    ]);
-    if (batchResult.error || rowsResult.error) throw batchResult.error ?? rowsResult.error;
-    const loaded = batchResult.data as ImportBatch; setBatch(loaded); setAccountId(loaded.account_id); setRows((rowsResult.data ?? []) as ImportRow[]);
+  const loadBatch = useCallback(
+    async (batchId: string) => {
+      const [batchResult, rowsResult] = await Promise.all([
+        client
+          .from("import_batches")
+          .select("*")
+          .eq("id", batchId)
+          .eq("user_id", userId)
+          .single(),
+        client
+          .from("import_rows")
+          .select("*")
+          .eq("batch_id", batchId)
+          .eq("user_id", userId)
+          .order("row_index"),
+      ]);
+      if (batchResult.error || rowsResult.error)
+        throw batchResult.error ?? rowsResult.error;
+      const loaded = batchResult.data as ImportBatch;
+      setBatch(loaded);
+      setAccountId(loaded.account_id);
+      setRows((rowsResult.data ?? []) as ImportRow[]);
+    },
+    [client, userId],
+  );
+  useEffect(() => {
+    void Promise.all([
+      client
+        .from("accounts")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("is_active", true)
+        .order("name"),
+      client
+        .from("transaction_categories")
+        .select("*")
+        .eq("user_id", userId)
+        .order("name"),
+      client
+        .from("import_batches")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false }),
+    ]).then(([accountResult, categoryResult, historyResult]) => {
+      setAccounts((accountResult.data ?? []) as Account[]);
+      setCategories((categoryResult.data ?? []) as TransactionCategory[]);
+      setHistory((historyResult.data ?? []) as ImportBatch[]);
+    });
   }, [client, userId]);
-  useEffect(() => { void Promise.all([
-    client.from("accounts").select("*").eq("user_id", userId).eq("is_active", true).order("name"),
-    client.from("transaction_categories").select("*").eq("user_id", userId).order("name"),
-    client.from("import_batches").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
-  ]).then(([accountResult, categoryResult, historyResult]) => { setAccounts((accountResult.data ?? []) as Account[]); setCategories((categoryResult.data ?? []) as TransactionCategory[]); setHistory((historyResult.data ?? []) as ImportBatch[]); }); }, [client, userId]);
 
   const readFile = async (file: File) => {
-    setBusy(true); setMessage("");
+    setBusy(true);
+    setMessage("");
     try {
-      const data = await file.arrayBuffer(); const lower = file.name.toLocaleLowerCase();
-      if (!lower.endsWith(".csv") && !lower.endsWith(".xlsx")) throw new Error("Formato non supportato: usa CSV o XLSX.");
+      const data = await file.arrayBuffer();
+      const lower = file.name.toLocaleLowerCase();
+      if (!lower.endsWith(".csv") && !lower.endsWith(".xlsx"))
+        throw new Error("Formato non supportato: usa CSV o XLSX.");
       const detection = lower.endsWith(".csv")
-        ? (() => { const read = readCsv(new TextDecoder().decode(data)); return { parserKey: "generic_bank_v1", providerLabel: "Formato generico CSV", compatibleAccountType: null, rows: normalizeBankRows(read.rows, suggestColumnMapping(read.headers)), read, generic: true } satisfies BankImportDetection; })()
+        ? (() => {
+            const read = readCsv(new TextDecoder().decode(data));
+            return {
+              parserKey: "generic_bank_v1",
+              providerLabel: "Formato generico CSV",
+              compatibleAccountType: null,
+              rows: normalizeBankRows(
+                read.rows,
+                suggestColumnMapping(read.headers),
+              ),
+              read,
+              generic: true,
+            } satisfies BankImportDetection;
+          })()
         : detectBankImport(XLSX.read(data, { cellDates: true }));
       const read = detection.read;
-      if (!(detection.rows.length || read.rows.length)) throw new Error("Il file non contiene righe leggibili.");
-      const mappings = detection.parserKey === "isybank_operations_v1" ? await loadImportMappings(client, userId, detection.parserKey) : [];
-      setInstrumentSelections(resolveInstrumentMappings(detection.rows, mappings, accounts, userId));
-      setPending({ file, data, read, detection }); setMapping(suggestColumnMapping(read.headers)); setAccountId("");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Lettura non riuscita."); }
-    finally { setBusy(false); }
+      if (!(detection.rows.length || read.rows.length))
+        throw new Error("Il file non contiene righe leggibili.");
+      const mappings =
+        detection.parserKey === "isybank_operations_v1"
+          ? await loadImportMappings(client, userId, detection.parserKey)
+          : [];
+      setInstrumentSelections(
+        resolveInstrumentMappings(detection.rows, mappings, accounts, userId),
+      );
+      setPending({ file, data, read, detection });
+      setMapping(suggestColumnMapping(read.headers));
+      setAccountId("");
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Lettura non riuscita.",
+      );
+    } finally {
+      setBusy(false);
+    }
   };
   const createPreview = async () => {
-    if (!pending || (!accountId && !detectedInstruments(pending.detection.rows).length)) return; setBusy(true); setBusyMessage("Preparazione movimenti…"); setMessage("");
+    if (
+      !pending ||
+      (!accountId && !detectedInstruments(pending.detection.rows).length)
+    )
+      return;
+    setBusy(true);
+    setBusyMessage("Preparazione movimenti…");
+    setMessage("");
     try {
-      const selectedAccount = accounts.find((account) => account.id === accountId);
-      if (pending.detection.compatibleAccountType && selectedAccount?.account_type !== pending.detection.compatibleAccountType) throw new Error("Il conto selezionato non è compatibile con questo provider.");
-      let parsed = pending.detection.generic ? normalizeBankRows(pending.read.rows, mapping) : pending.detection.rows;
+      const selectedAccount = accounts.find(
+        (account) => account.id === accountId,
+      );
+      if (
+        pending.detection.compatibleAccountType &&
+        selectedAccount?.account_type !==
+          pending.detection.compatibleAccountType
+      )
+        throw new Error(
+          "Il conto selezionato non è compatibile con questo provider.",
+        );
+      let parsed = pending.detection.generic
+        ? normalizeBankRows(pending.read.rows, mapping)
+        : pending.detection.rows;
       if (pending.detection.parserKey === "isybank_operations_v1") {
-        parsed = routeImportRows(parsed, instrumentSelections, accounts, userId);
-        await saveImportMappings(client, userId, pending.detection.parserKey, parsed);
+        parsed = routeImportRows(
+          parsed,
+          instrumentSelections,
+          accounts,
+          userId,
+        );
+        await saveImportMappings(
+          client,
+          userId,
+          pending.detection.parserKey,
+          parsed,
+        );
       }
-      const fallbackAccount = parsed.find((row) => row.target_account_id)?.target_account_id ?? accountId;
-      if (!fallbackAccount) throw new Error("Seleziona un account per creare la preview.");
-      const batchId = await createImportPreview(client, userId, fallbackAccount, pending.file, parsed, pending.data, pending.detection.parserKey);
-      setPending(null); await loadBatch(batchId); await loadHistory(); setMessage("Previsualizzazione creata. Controlla le righe prima di importare.");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Import non riuscito."); }
-    finally { setBusy(false); setBusyMessage(""); }
+      const fallbackAccount =
+        parsed.find((row) => row.target_account_id)?.target_account_id ??
+        accountId;
+      if (!fallbackAccount)
+        throw new Error("Seleziona un account per creare la preview.");
+      const batchId = await createImportPreview(
+        client,
+        userId,
+        fallbackAccount,
+        pending.file,
+        parsed,
+        pending.data,
+        pending.detection.parserKey,
+      );
+      setPending(null);
+      await loadBatch(batchId);
+      await loadHistory();
+      setMessage(
+        "Previsualizzazione creata. Controlla le righe prima di importare.",
+      );
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Import non riuscito.",
+      );
+    } finally {
+      setBusy(false);
+      setBusyMessage("");
+    }
   };
   const updateRow = async (row: ImportRow, changes: Partial<ImportRow>) => {
     if (!row.id) return;
     const next = { ...row, ...changes };
-    const canonicalChanged = "transaction_date" in changes || "amount" in changes || "description" in changes;
+    const canonicalChanged =
+      "transaction_date" in changes ||
+      "amount" in changes ||
+      "description" in changes;
     if (canonicalChanged) next.dedupe_fingerprint = fingerprint(next);
-    const persisted = canonicalChanged ? { ...changes, dedupe_fingerprint: next.dedupe_fingerprint } : changes;
-    setRows((current) => current.map((item) => item.id === row.id ? next : item));
-    const { error } = await client.from("import_rows").update(persisted).eq("id", row.id).eq("user_id", userId);
+    const persisted = canonicalChanged
+      ? { ...changes, dedupe_fingerprint: next.dedupe_fingerprint }
+      : changes;
+    setRows((current) =>
+      current.map((item) => (item.id === row.id ? next : item)),
+    );
+    const { error } = await client
+      .from("import_rows")
+      .update(persisted)
+      .eq("id", row.id)
+      .eq("user_id", userId);
     if (error) setMessage(error.message);
   };
   const runImport = async () => {
     if (!batch) return;
     try {
-      const missingBalanceDate = rows.filter((row) => row.status === "ready").some((row) => {
-        const account = accounts.find((item) => item.id === (row.target_account_id ?? batch.account_id));
-        return account && Number(account.opening_balance) !== 0 && !account.balance_as_of;
-      });
+      const missingBalanceDate = rows
+        .filter((row) => row.status === "ready")
+        .some((row) => {
+          const account = accounts.find(
+            (item) => item.id === (row.target_account_id ?? batch.account_id),
+          );
+          return (
+            account &&
+            Number(account.opening_balance) !== 0 &&
+            !account.balance_as_of
+          );
+        });
       if (missingBalanceDate) {
-        throw new Error("Definisci la data a cui si riferisce il saldo iniziale del conto prima di importare movimenti, altrimenti il saldo verrebbe conteggiato due volte.");
+        throw new Error(
+          "Definisci la data a cui si riferisce il saldo iniziale del conto prima di importare movimenti, altrimenti il saldo verrebbe conteggiato due volte.",
+        );
       }
-      setBusy(true); setBusyMessage("Importazione nel ledger…"); setMessage("");
-      const imported = await commitImportBatch(client, batch.id); let classificationMessage = ""; try { const result = await classifyTransactions(client, batch.id); classificationMessage = ` ${result.classified_count} classificati · ${result.transfer_count} trasferimenti riconciliati · ${result.unclassified_count} da verificare.`; } catch (reason) { classificationMessage = ` Movimenti importati, classificazione automatica non completata: ${reason instanceof Error ? reason.message : "errore sconosciuto"}`; } await loadBatch(batch.id); await loadHistory(); setMessage(`${imported} movimenti importati.${classificationMessage}`);
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Import non riuscito: nessun movimento è stato registrato."); }
-    finally { setBusy(false); setBusyMessage(""); }
+      setBusy(true);
+      setBusyMessage("Importazione nel ledger…");
+      setMessage("");
+      const imported = await commitImportBatch(client, batch.id);
+      let classificationMessage = "";
+      try {
+        const result = await classifyTransactions(client, batch.id);
+        classificationMessage = ` ${result.classified_count} classificati · ${result.transfer_count} trasferimenti riconciliati · ${result.unclassified_count} da verificare.`;
+      } catch (reason) {
+        classificationMessage = ` Movimenti importati, classificazione automatica non completata: ${reason instanceof Error ? reason.message : "errore sconosciuto"}`;
+      }
+      await loadBatch(batch.id);
+      await loadHistory();
+      setMessage(`${imported} movimenti importati.${classificationMessage}`);
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Import non riuscito: nessun movimento è stato registrato.",
+      );
+    } finally {
+      setBusy(false);
+      setBusyMessage("");
+    }
   };
   const cancelBatch = async () => {
     if (!batch || batch.status === "completed") return;
-    setBusy(true); setBusyMessage("Annullamento import…"); setMessage("");
+    setBusy(true);
+    setBusyMessage("Annullamento import…");
+    setMessage("");
     try {
-      await cancelImportBatch(client, userId, batch.id); await loadBatch(batch.id); await loadHistory();
+      await cancelImportBatch(client, userId, batch.id);
+      await loadBatch(batch.id);
+      await loadHistory();
       setMessage("Import annullato. Ora puoi ricaricare lo stesso file.");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Impossibile annullare l'import."); }
-    finally { setBusy(false); setBusyMessage(""); }
+    } catch (error) {
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Impossibile annullare l'import.",
+      );
+    } finally {
+      setBusy(false);
+      setBusyMessage("");
+    }
   };
-  const reset = () => { setBatch(null); setRows([]); setPending(null); setMapping({}); setAccountId(""); setMessage(""); };
-  const counts = rows.reduce<Record<string, number>>((result, row) => ({ ...result, [row.status]: (result[row.status] ?? 0) + 1 }), {});
-  const instruments = pending ? detectedInstruments(pending.detection.rows) : [];
-  const needsInstrumentMapping = pending?.detection.parserKey === "isybank_operations_v1";
-  const missingInstrumentMapping = instruments.some((instrument) => !instrumentSelections[instrument.key]);
-  const accountsMissingBalanceDate = batch ? accounts.filter((account) =>
-    Number(account.opening_balance) !== 0 && !account.balance_as_of
-    && rows.some((row) => row.status === "ready" && (row.target_account_id ?? batch.account_id) === account.id)) : [];
-  const incompleteBatch = batch?.status === "preview" && rows.length < batch.row_count;
+  const reset = () => {
+    setBatch(null);
+    setRows([]);
+    setPending(null);
+    setMapping({});
+    setAccountId("");
+    setMessage("");
+  };
+  const counts = rows.reduce<Record<string, number>>(
+    (result, row) => ({
+      ...result,
+      [row.status]: (result[row.status] ?? 0) + 1,
+    }),
+    {},
+  );
+  const instruments = pending
+    ? detectedInstruments(pending.detection.rows)
+    : [];
+  const needsInstrumentMapping =
+    pending?.detection.parserKey === "isybank_operations_v1";
+  const missingInstrumentMapping = instruments.some(
+    (instrument) => !instrumentSelections[instrument.key],
+  );
+  const accountsMissingBalanceDate = batch
+    ? accounts.filter(
+        (account) =>
+          Number(account.opening_balance) !== 0 &&
+          !account.balance_as_of &&
+          rows.some(
+            (row) =>
+              row.status === "ready" &&
+              (row.target_account_id ?? batch.account_id) === account.id,
+          ),
+      )
+    : [];
+  const incompleteBatch =
+    batch?.status === "preview" && rows.length < batch.row_count;
 
-  return <section className="panel"><h3>Import movimenti bancari</h3><p className="muted">CSV e XLSX vengono mappati e normalizzati in staging. Il commit del batch è atomico.</p>
-    {!batch && !pending && <label className="uploadBox"><Upload size={32}/><strong>{busy ? "Lettura…" : "Carica estratto conto"}</strong><span>.csv / .xlsx</span><input type="file" accept=".csv,.xlsx" disabled={busy} onChange={event => { const file = event.target.files?.[0]; if (file) void readFile(file); }}/></label>}
-    {pending && <div className="mappingPanel"><h4>{pending.file.name}</h4><div className="importSummary"><span>Provider: <b>{pending.detection.providerLabel}</b></span><span>Parser: <code>{pending.detection.parserKey}</code></span><span>{pending.detection.generic ? pending.read.rows.length : pending.detection.rows.length} righe riconosciute</span></div>
-      {needsInstrumentMapping ? <><h4>Strumenti rilevati</h4>{instruments.map((instrument) => {
-        const expected = instrumentAccountType(instrument.label);
-        const compatible = accounts.filter((account) => !expected || account.account_type === expected);
-        return <label className="field" key={instrument.key}><b>{instrument.label}</b><span>{instrument.count} movimenti{expected ? ` · account ${expected}` : ""}</span>
-          <select disabled={busy} value={instrumentSelections[instrument.key] ?? ""} onChange={event => setInstrumentSelections((current) => ({ ...current, [instrument.key]: event.target.value }))}>
-            <option value="">Seleziona account</option>{compatible.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
-          </select>{!compatible.length && <span className="notice">Crea prima un account {expected ?? "appropriato"} nella sezione Accounts, poi ricarica il file.</span>}
-          {expected === "credit_card" && accounts.find((account) => account.id === instrumentSelections[instrument.key])?.include_in_liquidity && <span className="notice">Questa carta è inclusa nella liquidità. Verifica l’impostazione in Accounts: normalmente una carta di credito è esclusa.</span>}
-        </label>;
-      })}</> : <label className="field">Conto<select value={accountId} onChange={event => setAccountId(event.target.value)}><option value="">Seleziona conto</option>{accounts.filter(account => !pending.detection.compatibleAccountType || account.account_type === pending.detection.compatibleAccountType).map(account => <option key={account.id} value={account.id}>{account.name}</option>)}</select></label>}
-      {needsInstrumentMapping && pending.detection.rows.some(row => !row.source_instrument) && <div className="notice">Alcune righe non hanno “Conto o carta” e saranno segnalate come errori. Se nessuno strumento è rilevato, correggi il file e ricaricalo.</div>}
-      {pending.detection.compatibleAccountType && !accounts.some(account => account.account_type === pending.detection.compatibleAccountType) && <div className="notice">Per importare questo file crea prima il relativo conto/carta nella sezione Accounts.</div>}
-      {pending.detection.generic && <><h4>Mappa le colonne</h4><div className="formGrid">{mappingFields.map(field => <label className="field" key={field}>{mappingLabels[field]}<select value={mapping[field] ?? ""} onChange={event => setMapping({ ...mapping, [field]: event.target.value || undefined })}><option value="">Non mappata</option>{pending.read.headers.map(header => <option key={header}>{header}</option>)}</select></label>)}</div></>}
-      <button className="primary" disabled={busy || (needsInstrumentMapping ? !instruments.length || missingInstrumentMapping : !accountId) || (pending.detection.generic && (!mapping.transaction_date || !mapping.description || (!mapping.amount && !mapping.debit && !mapping.credit)))} onClick={() => void createPreview()}>Crea preview</button> <button className="ghost" onClick={reset}>Annulla</button></div>}
-    {busyMessage && <div className="notice">{busyMessage}</div>}
-    {message && <div className="notice">{message}</div>}
-    {batch && <><div className="importSummary"><b>{batch.filename}</b><span>Pronte: {counts.ready ?? 0}</span><span>Possibili duplicati: {counts.possible_duplicate ?? 0}</span><span>Duplicati: {counts.duplicate ?? 0}</span><span>Errori: {counts.error ?? 0}</span></div>
-      {incompleteBatch && <div className="notice">Import incompleto: le righe dichiarate dal file non sono state salvate correttamente. Annulla il batch e ricarica il file.</div>}
-      <div className="importTable">{rows.map(row => <div className={`importRow status-${row.status}`} key={row.id ?? row.row_index}>
-        <span><input type="date" value={row.transaction_date ?? ""} disabled={batch.status !== "preview" || row.status === "imported" || row.status === "duplicate"} onChange={event => void updateRow(row, { transaction_date: event.target.value })}/><small>riga {row.row_index + 1}</small><small>{row.source_instrument} {accounts.find(account => account.id === (row.target_account_id ?? batch.account_id))?.name}</small></span>
-        <input value={row.description ?? ""} disabled={batch.status !== "preview" || row.status === "imported" || row.status === "duplicate"} onChange={event => void updateRow(row, { description: event.target.value })}/>
-        <input type="number" step="0.01" value={row.amount ?? ""} disabled={batch.status !== "preview" || row.status === "imported" || row.status === "duplicate"} onChange={event => void updateRow(row, { amount: Number(event.target.value) })}/>
-        <select value={row.suggested_transaction_type ?? "unclassified"} disabled={batch.status !== "preview" || row.status === "imported" || row.status === "duplicate"} onChange={event => void updateRow(row, { suggested_transaction_type: event.target.value as TransactionType })}>{transactionTypes.map(type => <option key={type}>{type}</option>)}</select>
-        <select value={row.suggested_category_id ?? ""} disabled={batch.status !== "preview" || row.status === "imported" || row.status === "duplicate"} onChange={event => void updateRow(row, { suggested_category_id: event.target.value || null })}><option value="">Nessuna categoria</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select>
-        <select value={row.status} disabled={batch.status !== "preview" || row.status === "imported" || row.status === "error" || row.status === "duplicate"} onChange={event => void updateRow(row, { status: event.target.value as ImportRowStatus })}><option value="ready">Importa</option><option value="duplicate">Duplicato</option><option value="ignored">Ignora</option>{row.status === "possible_duplicate" && <option value="possible_duplicate">Da verificare</option>}<option value="imported" disabled>Importato</option><option value="error" disabled>Errore</option></select>
-      </div>)}</div>
-      {batch.status === "preview" && accountsMissingBalanceDate.length > 0 && <div className="notice">Definisci la data a cui si riferisce il saldo iniziale del conto prima di importare movimenti, altrimenti il saldo verrebbe conteggiato due volte.</div>}
-      {batch.status === "preview" && !incompleteBatch ? <button className="primary mt" disabled={busy || !(counts.ready > 0) || (accountsMissingBalanceDate.length > 0)} onClick={() => void runImport()}>Importa atomicamente {counts.ready ?? 0} movimenti</button> : null} {batch.status !== "completed" && batch.status !== "cancelled" && <button className="ghost mt" disabled={busy} onClick={() => void cancelBatch()}>Annulla import</button>} <button className="ghost mt" disabled={busy} onClick={reset}>Chiudi dettaglio</button>
-    </>}
-    {!pending && !batch && <div className="mt"><h3>Storico import</h3><div className="historyTable">{history.map(item => <div className="historyRow" key={item.id}><span><b>{item.filename || "—"}</b><small>{accounts.find(account => account.id === item.account_id)?.name || item.account_id}</small></span><span>{item.created_at ? new Date(item.created_at).toLocaleString("it-IT") : "—"}</span><span>{item.status}</span><span>{item.row_count} righe</span><span>{item.imported_count} importate</span><span>{item.duplicate_count} duplicate</span><span>{item.ignored_count} ignorate</span><span>{item.error_count} errori</span><button className="ghost" onClick={() => void loadBatch(item.id)}>Apri dettaglio</button></div>)}</div></div>}
-  </section>;
+  return (
+    <section className="pageStack">
+      <PageHeader
+        title="Import"
+        eyebrow="Il tuo denaro"
+        description="Carica un estratto conto CSV o Excel e verifica i movimenti prima di importarli."
+      />
+      <div className="panel">
+        {!batch && !pending && (
+          <label className="uploadBox">
+            <Upload size={32} />
+            <strong>{busy ? "Lettura…" : "Carica estratto conto"}</strong>
+            <span>.csv / .xlsx</span>
+            <input
+              type="file"
+              accept=".csv,.xlsx"
+              disabled={busy}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void readFile(file);
+              }}
+            />
+          </label>
+        )}
+        {pending && (
+          <div className="mappingPanel">
+            <h4>{pending.file.name}</h4>
+            <div className="importSummary">
+              <span>
+                Provider: <b>{pending.detection.providerLabel}</b>
+              </span>
+              <details className="technicalDetails">
+                <summary>Dettagli del formato</summary>
+                <code>{pending.detection.parserKey}</code>
+              </details>
+              <span>
+                {pending.detection.generic
+                  ? pending.read.rows.length
+                  : pending.detection.rows.length}{" "}
+                righe riconosciute
+              </span>
+            </div>
+            {needsInstrumentMapping ? (
+              <>
+                <h4>Strumenti rilevati</h4>
+                {instruments.map((instrument) => {
+                  const expected = instrumentAccountType(instrument.label);
+                  const compatible = accounts.filter(
+                    (account) => !expected || account.account_type === expected,
+                  );
+                  return (
+                    <label className="field" key={instrument.key}>
+                      <b>{instrument.label}</b>
+                      <span>
+                        {instrument.count} movimenti
+                        {expected ? ` · account ${expected}` : ""}
+                      </span>
+                      <select
+                        disabled={busy}
+                        value={instrumentSelections[instrument.key] ?? ""}
+                        onChange={(event) =>
+                          setInstrumentSelections((current) => ({
+                            ...current,
+                            [instrument.key]: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">Seleziona account</option>
+                        {compatible.map((account) => (
+                          <option key={account.id} value={account.id}>
+                            {account.name}
+                          </option>
+                        ))}
+                      </select>
+                      {!compatible.length && (
+                        <span className="notice">
+                          Crea prima un account {expected ?? "appropriato"}{" "}
+                          nella sezione Conti, poi ricarica il file.
+                        </span>
+                      )}
+                      {expected === "credit_card" &&
+                        accounts.find(
+                          (account) =>
+                            account.id === instrumentSelections[instrument.key],
+                        )?.include_in_liquidity && (
+                          <span className="notice">
+                            Questa carta è inclusa nella liquidità. Verifica
+                            l’impostazione in Conti: normalmente una carta di
+                            credito è esclusa.
+                          </span>
+                        )}
+                    </label>
+                  );
+                })}
+              </>
+            ) : (
+              <label className="field">
+                Conto
+                <select
+                  value={accountId}
+                  onChange={(event) => setAccountId(event.target.value)}
+                >
+                  <option value="">Seleziona conto</option>
+                  {accounts
+                    .filter(
+                      (account) =>
+                        !pending.detection.compatibleAccountType ||
+                        account.account_type ===
+                          pending.detection.compatibleAccountType,
+                    )
+                    .map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            )}
+            {needsInstrumentMapping &&
+              pending.detection.rows.some((row) => !row.source_instrument) && (
+                <div className="notice">
+                  Alcune righe non hanno “Conto o carta” e saranno segnalate
+                  come errori. Se nessuno strumento è rilevato, correggi il file
+                  e ricaricalo.
+                </div>
+              )}
+            {pending.detection.compatibleAccountType &&
+              !accounts.some(
+                (account) =>
+                  account.account_type ===
+                  pending.detection.compatibleAccountType,
+              ) && (
+                <div className="notice">
+                  Per importare questo file crea prima il relativo conto/carta
+                  nella sezione Conti.
+                </div>
+              )}
+            {pending.detection.generic && (
+              <>
+                <h4>Mappa le colonne</h4>
+                <div className="formGrid">
+                  {mappingFields.map((field) => (
+                    <label className="field" key={field}>
+                      {mappingLabels[field]}
+                      <select
+                        value={mapping[field] ?? ""}
+                        onChange={(event) =>
+                          setMapping({
+                            ...mapping,
+                            [field]: event.target.value || undefined,
+                          })
+                        }
+                      >
+                        <option value="">Non mappata</option>
+                        {pending.read.headers.map((header) => (
+                          <option key={header}>{header}</option>
+                        ))}
+                      </select>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+            <button
+              className="primary"
+              disabled={
+                busy ||
+                (needsInstrumentMapping
+                  ? !instruments.length || missingInstrumentMapping
+                  : !accountId) ||
+                (pending.detection.generic &&
+                  (!mapping.transaction_date ||
+                    !mapping.description ||
+                    (!mapping.amount && !mapping.debit && !mapping.credit)))
+              }
+              onClick={() => void createPreview()}
+            >
+              Crea preview
+            </button>{" "}
+            <button className="ghost" onClick={reset}>
+              Annulla
+            </button>
+          </div>
+        )}
+        {busyMessage && (
+          <div className="notice" role="status">
+            {busyMessage}
+          </div>
+        )}
+        {message && (
+          <div className="notice" role="status">
+            {message}
+          </div>
+        )}
+        {batch && (
+          <>
+            <div className="importSummary">
+              <b>{batch.filename}</b>
+              <span>Pronte: {counts.ready ?? 0}</span>
+              <span>Possibili duplicati: {counts.possible_duplicate ?? 0}</span>
+              <span>Duplicati: {counts.duplicate ?? 0}</span>
+              <span>Errori: {counts.error ?? 0}</span>
+            </div>
+            {incompleteBatch && (
+              <div className="notice">
+                Import incompleto: le righe dichiarate dal file non sono state
+                salvate correttamente. Annulla il batch e ricarica il file.
+              </div>
+            )}
+            <div className="importTable">
+              {rows.map((row) => (
+                <div
+                  className={`importRow status-${row.status}`}
+                  key={row.id ?? row.row_index}
+                >
+                  <span>
+                    <input
+                      aria-label={`Data movimento ${row.row_index + 1}`}
+                      type="date"
+                      value={row.transaction_date ?? ""}
+                      disabled={
+                        batch.status !== "preview" ||
+                        row.status === "imported" ||
+                        row.status === "duplicate"
+                      }
+                      onChange={(event) =>
+                        void updateRow(row, {
+                          transaction_date: event.target.value,
+                        })
+                      }
+                    />
+                    <small>riga {row.row_index + 1}</small>
+                    <small>
+                      {row.source_instrument}{" "}
+                      {
+                        accounts.find(
+                          (account) =>
+                            account.id ===
+                            (row.target_account_id ?? batch.account_id),
+                        )?.name
+                      }
+                    </small>
+                  </span>
+                  <input
+                    aria-label={`Descrizione movimento ${row.row_index + 1}`}
+                    value={row.description ?? ""}
+                    disabled={
+                      batch.status !== "preview" ||
+                      row.status === "imported" ||
+                      row.status === "duplicate"
+                    }
+                    onChange={(event) =>
+                      void updateRow(row, { description: event.target.value })
+                    }
+                  />
+                  <input
+                    aria-label={`Importo movimento ${row.row_index + 1}`}
+                    type="number"
+                    step="0.01"
+                    value={row.amount ?? ""}
+                    disabled={
+                      batch.status !== "preview" ||
+                      row.status === "imported" ||
+                      row.status === "duplicate"
+                    }
+                    onChange={(event) =>
+                      void updateRow(row, {
+                        amount: Number(event.target.value),
+                      })
+                    }
+                  />
+                  <select
+                    aria-label={`Tipo movimento ${row.row_index + 1}`}
+                    value={row.suggested_transaction_type ?? "unclassified"}
+                    disabled={
+                      batch.status !== "preview" ||
+                      row.status === "imported" ||
+                      row.status === "duplicate"
+                    }
+                    onChange={(event) =>
+                      void updateRow(row, {
+                        suggested_transaction_type: event.target
+                          .value as TransactionType,
+                      })
+                    }
+                  >
+                    {transactionTypes.map((type) => (
+                      <option key={type} value={type}>
+                        {transactionTypeLabels[type]}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label={`Categoria movimento ${row.row_index + 1}`}
+                    value={row.suggested_category_id ?? ""}
+                    disabled={
+                      batch.status !== "preview" ||
+                      row.status === "imported" ||
+                      row.status === "duplicate"
+                    }
+                    onChange={(event) =>
+                      void updateRow(row, {
+                        suggested_category_id: event.target.value || null,
+                      })
+                    }
+                  >
+                    <option value="">Nessuna categoria</option>
+                    {categories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label={`Stato movimento ${row.row_index + 1}`}
+                    value={row.status}
+                    disabled={
+                      batch.status !== "preview" ||
+                      row.status === "imported" ||
+                      row.status === "error" ||
+                      row.status === "duplicate"
+                    }
+                    onChange={(event) =>
+                      void updateRow(row, {
+                        status: event.target.value as ImportRowStatus,
+                      })
+                    }
+                  >
+                    <option value="ready">Importa</option>
+                    <option value="duplicate">Duplicato</option>
+                    <option value="ignored">Ignora</option>
+                    {row.status === "possible_duplicate" && (
+                      <option value="possible_duplicate">Da verificare</option>
+                    )}
+                    <option value="imported" disabled>
+                      Importato
+                    </option>
+                    <option value="error" disabled>
+                      Errore
+                    </option>
+                  </select>
+                </div>
+              ))}
+            </div>
+            {batch.status === "preview" &&
+              accountsMissingBalanceDate.length > 0 && (
+                <div className="notice">
+                  Definisci la data a cui si riferisce il saldo iniziale del
+                  conto prima di importare movimenti, altrimenti il saldo
+                  verrebbe conteggiato due volte.
+                </div>
+              )}
+            {batch.status === "preview" && !incompleteBatch ? (
+              <button
+                className="primary mt"
+                disabled={
+                  busy ||
+                  !(counts.ready > 0) ||
+                  accountsMissingBalanceDate.length > 0
+                }
+                onClick={() => void runImport()}
+              >
+                Importa {counts.ready ?? 0} movimenti
+              </button>
+            ) : null}{" "}
+            {batch.status !== "completed" && batch.status !== "cancelled" && (
+              <button
+                className="ghost mt"
+                disabled={busy}
+                onClick={() => void cancelBatch()}
+              >
+                Annulla import
+              </button>
+            )}{" "}
+            <button className="ghost mt" disabled={busy} onClick={reset}>
+              Chiudi dettaglio
+            </button>
+          </>
+        )}
+        {!pending && !batch && (
+          <div className="mt">
+            <h3>Storico import</h3>
+            <div className="historyTable">
+              {history.length === 0 && (
+                <EmptyState
+                  title="Nessun import ancora"
+                  description="Carica il tuo primo estratto conto per iniziare."
+                />
+              )}
+              {history.map((item) => (
+                <div className="historyRow" key={item.id}>
+                  <span>
+                    <b>{item.filename || "—"}</b>
+                    <small>
+                      {accounts.find(
+                        (account) => account.id === item.account_id,
+                      )?.name || item.account_id}
+                    </small>
+                  </span>
+                  <span>
+                    {item.created_at
+                      ? new Date(item.created_at).toLocaleString("it-IT")
+                      : "—"}
+                  </span>
+                  <span>{item.status}</span>
+                  <span>{item.row_count} righe</span>
+                  <span>{item.imported_count} importate</span>
+                  <span>{item.duplicate_count} duplicate</span>
+                  <span>{item.ignored_count} ignorate</span>
+                  <span>{item.error_count} errori</span>
+                  <button
+                    className="ghost"
+                    onClick={() => void loadBatch(item.id)}
+                  >
+                    Apri dettaglio
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+  );
 }

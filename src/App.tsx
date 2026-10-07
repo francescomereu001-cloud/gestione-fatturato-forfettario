@@ -1,4 +1,4 @@
-import { type FormEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
 import {
   Euro,
@@ -11,12 +11,8 @@ import {
   Trash2,
   Save,
   Wallet,
-  Landmark,
-  ArrowLeftRight,
   AlertTriangle,
-  BarChart3,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -35,6 +31,11 @@ import type { Invoice, TaxPayment, TaxSettings } from "./types/finance";
 import { AccountsPage, TransactionsPage } from "./components/LedgerPages";
 import { BankImportPage } from "./components/BankImportPage";
 import { ResidualReviewPage } from "./components/ResidualReviewPage";
+import { AppShell } from "./components/layout/AppShell";
+import { PageHeader } from "./components/layout/PageHeader";
+import { LoginPage } from "./components/layout/LoginPage";
+import { Brand } from "./components/layout/Sidebar";
+import { StatCard as Card } from "./components/ui/StatCard";
 import "./App.css";
 
 const euro = (n: number) =>
@@ -93,39 +94,15 @@ function Login() {
     setSubmitting(false);
   };
 
-  return (
-    <main className="authPage">
-      <form className="authCard" onSubmit={login}>
-        <div className="logo">€</div>
-        <h1>Fatturato PRO</h1>
-        <p className="muted">Accedi con l’utente creato o invitato in Supabase.</p>
-        <Input label="Email" type="email" value={email} onChange={setEmail} />
-        <Input label="Password" type="password" value={password} onChange={setPassword} />
-        {errorMessage ? <div className="notice">{errorMessage}</div> : null}
-        <button className="primary" type="submit" disabled={submitting}>
-          {submitting ? "Accesso…" : "Accedi"}
-        </button>
-      </form>
-    </main>
-  );
+  return <LoginPage email={email} password={password} submitting={submitting} errorMessage={errorMessage}
+    onEmailChange={setEmail} onPasswordChange={setPassword} onSubmit={login} />;
 }
 
 function AuthStatus({ message }: { message: string }) {
-  return <main className="authPage"><div className="authCard"><p>{message}</p></div></main>;
+  return <main className="authPage"><div className="authCard"><Brand /><p role="status">{message}</p></div></main>;
 }
 
 function PrivateApp({ session }: { session: Session }) {
-  const navItems: Array<[string, string, LucideIcon]> = [
-    ["dashboard", "Dashboard", BarChart3],
-    ["accounts", "Accounts", Landmark],
-    ["transactions", "Transactions", ArrowLeftRight],
-    ["residual-review", "Review Center", AlertTriangle],
-    ["bank-import", "Import banca", Upload],
-    ["fatture", "Fatture", Receipt],
-    ["fiscale", "Fiscale", PiggyBank],
-    ["pagamenti", "F24 / Pagamenti", Wallet],
-    ["import", "Import fatture Excel", Upload],
-  ];
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [payments, setPayments] = useState<TaxPayment[]>([]);
   const [settings, setSettings] = useState<TaxSettings[]>([]);
@@ -337,52 +314,14 @@ function PrivateApp({ session }: { session: Session }) {
   };
 
   return (
-    <div className="app">
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="logo">€</div>
-          <div>
-            <h1>Fatturato PRO</h1>
-            <p>Regime forfettario</p>
-          </div>
-        </div>
-
-        <nav>
-          {navItems.map(([id, label, Icon]) => (
-            <button
-              key={id}
-              className={activeTab === id ? "active" : ""}
-              onClick={() => setActiveTab(id)}
-            >
-              <Icon size={18} />
-              {label}
-            </button>
-          ))}
-        </nav>
-
-        <div className="yearBox">
-          <label>Anno fiscale</label>
-          <select value={selectedYear} onChange={(e) => setSelectedYear(Number(e.target.value))}>
-            {years.map((y) => (
-              <option key={y}>{y}</option>
-            ))}
-          </select>
-        </div>
-      </aside>
-
-      <main className="main">
-        <header className="topbar">
-          <div>
-            <h2>Gestione economica aziendale</h2>
-            <p>Fatture, incassi, accantonamenti, F24 e previsione tasse per anno fiscale.</p>
-          </div>
-          <div className="topbarActions">
-            <span className="sessionUser">{session.user.email}</span>
-            <button onClick={loadAll} className="ghost">{loading ? "Aggiorno..." : "Aggiorna"}</button>
-            <button onClick={() => void supabase?.auth.signOut()} className="ghost">Esci</button>
-          </div>
-        </header>
-        {errorMessage ? <div className="notice">{errorMessage}</div> : null}
+    <AppShell activeTab={activeTab} onNavigate={setActiveTab} email={session.user.email} loading={loading}
+      onRefresh={() => void loadAll()} onLogout={() => void supabase?.auth.signOut()}>
+      {["dashboard", "fatture", "fiscale", "pagamenti", "import"].includes(activeTab) && <PageHeader
+        title={({ dashboard: "Overview", fatture: "Entrate", fiscale: "Fiscale", pagamenti: "F24 / Pagamenti", import: "Import fatture Excel" } as Record<string, string>)[activeTab]}
+        eyebrow={activeTab === "dashboard" ? "Situazione fiscale" : "Entrate e tasse"}
+        description={({ dashboard: "Fatture, incassi e previsione fiscale. I riepiloghi attuali si riferiscono alla tua attività.", fatture: "Le tue fatture e gli incassi, in un unico spazio.", fiscale: "Parametri e previsioni per il tuo anno fiscale.", pagamenti: "Tieni traccia dei versamenti e degli adempimenti fiscali.", import: "Carica il report del tuo portale di fatturazione." } as Record<string, string>)[activeTab]}
+        action={<label className="field">Anno fiscale<select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))}>{years.map(y => <option key={y}>{y}</option>)}</select></label>} />}
+        {errorMessage ? <div className="notice" role="alert">{errorMessage}</div> : null}
 
         {activeTab === "dashboard" && (
           <>
@@ -407,7 +346,7 @@ function PrivateApp({ session }: { session: Session }) {
                     <XAxis dataKey="mese" />
                     <YAxis />
                     <Tooltip formatter={(v) => euro(Number(v ?? 0))} />
-                    <Bar dataKey="fatturato" radius={[8, 8, 0, 0]} />
+                    <Bar dataKey="fatturato" fill="var(--fm-primary)" radius={[8, 8, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -431,7 +370,7 @@ function PrivateApp({ session }: { session: Session }) {
             </section>
 
             <section className="panel">
-              <h3>Liquidità reale stimata</h3>
+              <h3>Riepilogo fatture e tasse</h3>
               <div className="cards mini">
                 <Card icon={<Wallet />} title="Netto fatture" value={euro(stats.netto)} />
                 <Card icon={<CalendarDays />} title="Da incassare" value={euro(stats.daIncassare)} />
@@ -493,7 +432,7 @@ function PrivateApp({ session }: { session: Session }) {
                   <span>{i.cliente}</span>
                   <span>{euro(Number(i.lordo || 0))}</span>
                   <span>{euro(Number(i.netto || 0))}</span>
-                  <button className="iconBtn" onClick={() => deleteInvoice(i.id)}>
+                  <button className="iconBtn" aria-label={`Elimina fattura ${i.numero}`} onClick={() => deleteInvoice(i.id)}>
                     <Trash2 size={16} />
                   </button>
                 </div>
@@ -590,19 +529,7 @@ function PrivateApp({ session }: { session: Session }) {
             </label>
           </section>
         )}
-      </main>
-    </div>
-  );
-}
-
-type CardProps = { icon: ReactNode; title: string; value: string; danger?: boolean };
-function Card({ icon, title, value, danger }: CardProps) {
-  return (
-    <div className={`card ${danger ? "danger" : ""}`}>
-      <div className="cardIcon">{icon}</div>
-      <p>{title}</p>
-      <h2>{value}</h2>
-    </div>
+    </AppShell>
   );
 }
 
