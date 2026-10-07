@@ -49,8 +49,8 @@ export const navigationSections: Array<{ label: string; items: NavItem[] }> = [
   {
     label: "Planning",
     items: [
-      { id: "funds", label: "Fondi", icon: Wallet, future: true },
-      { id: "goals", label: "Obiettivi", icon: Target, future: true },
+      { id: "funds", label: "Fondi", icon: Wallet },
+      { id: "goals", label: "Obiettivi", icon: Target },
       {
         id: "investments",
         label: "Investimenti",
