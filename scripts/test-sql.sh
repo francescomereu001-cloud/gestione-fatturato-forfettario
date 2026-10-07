@@ -33,6 +33,10 @@ for migration in supabase/migrations/*.sql; do
     run_sql supabase/tests/pr10_upgrade_preservation.sql
     run_sql "$migration"
     run_sql supabase/tests/pr10_upgrade_verify.sql
+  elif [[ "$migration" == *pr11_funds_goals_safe_to_spend.sql ]]; then
+    run_sql supabase/tests/pr11_upgrade_preservation.sql
+    run_sql "$migration"
+    run_sql supabase/tests/pr11_upgrade_verify.sql
   else
     run_sql "$migration"
   fi
@@ -44,6 +48,8 @@ run_sql supabase/tests/pr6_residual_review.sql
 run_sql supabase/tests/pr9_smart_classification.sql
 
 run_sql supabase/tests/pr10_fiscal_engine.sql
+run_sql supabase/tests/pr11_planning.sql
+bash scripts/test-pr11-concurrency.sh "$pr6_container"
 
 if [[ "${PR10_RUN_ADVISORS:-0}" == 1 ]]; then
   run_advisors after

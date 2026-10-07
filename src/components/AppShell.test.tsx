@@ -65,8 +65,6 @@ test("FinancialMind shell groups navigation, exposes current page and disables f
     "page",
   );
   for (const future of [
-    "Fondi",
-    "Obiettivi",
     "Investimenti",
     "Patrimonio",
     "Debiti",
@@ -140,7 +138,7 @@ test("mobile drawer cycles keyboard focus across enabled navigation only", () =>
     name: "Chiudi navigazione",
   });
   const last = within(dialog).getByRole("button", {
-    name: "Import fatture Excel",
+    name: "Obiettivi",
   });
   last.focus();
   fireEvent.keyDown(last, { key: "Tab" });
@@ -148,4 +146,12 @@ test("mobile drawer cycles keyboard focus across enabled navigation only", () =>
   first.focus();
   fireEvent.keyDown(first, { key: "Tab", shiftKey: true });
   assert.equal(document.activeElement, last);
+});
+
+test("Funds and Goals are enabled and emit their planning navigation IDs", () => {
+  const tabs: string[] = [];
+  const view = shell((id) => tabs.push(id));
+  fireEvent.click(view.getByRole("button", { name: "Fondi" }));
+  fireEvent.click(view.getByRole("button", { name: "Obiettivi" }));
+  assert.deepEqual(tabs, ["funds", "goals"]);
 });

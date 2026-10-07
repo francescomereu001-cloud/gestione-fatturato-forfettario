@@ -1194,3 +1194,17 @@ body:has(.mobileDrawer[open]) {
 .transactionTable td:first-child { white-space: nowrap; }
 .transactionTable { min-width: 1100px; }
 .transactionTable .badge { white-space: nowrap; overflow-wrap: normal; }
+
+/* PR11: preserve the PR7 shell; planning figures arrive from server summaries. */
+.safeToSpendPanel { border: 2px solid var(--fm-primary); background: linear-gradient(140deg, var(--fm-surface, #fff), var(--fm-bg, #f7fafc)); }
+.safeToSpendHeader { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
+.safeToSpendValue { font-size: clamp(1.6rem, 4vw, 3rem); font-weight: 750; line-height: 1.25; }
+.planningBreakdown { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .55rem 1rem; }
+.planningBreakdown dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.planningGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 1rem; }
+.planningActions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem; }
+.planningWarning { border-left: 4px solid var(--fm-danger, #b42318); padding: 1rem; background: var(--fm-danger-soft, #fff1f0); }
+.planningCommitment { display: flex; justify-content: space-between; align-items: center; gap: 1rem; margin: .75rem 0; }
+.planningGrid progress { width: 100%; accent-color: var(--fm-primary); }
+.planningKpis { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+@media (max-width: 600px) { .planningCommitment, .safeToSpendHeader { flex-direction: column; align-items: stretch; } .planningBreakdown { font-size: .9rem; } }

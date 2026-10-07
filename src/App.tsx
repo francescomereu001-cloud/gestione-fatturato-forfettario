@@ -1,3 +1,4 @@
+import { PlanningOverview, FundsPage, GoalsPage } from "./components/PlanningPages";
 import { fiscalMoney } from "./components/ui/fiscalLabels";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import type { Session } from "@supabase/supabase-js";
@@ -108,6 +109,7 @@ function PrivateApp({ session }: { session: Session }) {
   const [payments, setPayments] = useState<TaxPayment[]>([]);
   const [fiscalSummary, setFiscalSummary] = useState<FinancialTaxSummary | null>(null);
   const [fiscalError, setFiscalError] = useState("");
+  const [planningRefresh, setPlanningRefresh] = useState(0);
   const [settings, setSettings] = useState<TaxSettings[]>([]);
   const [selectedYear, setSelectedYear] = useState(currentYear);
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -161,6 +163,7 @@ function PrivateApp({ session }: { session: Session }) {
       return;
     }
 
+    setPlanningRefresh(value => value + 1);
     setFiscalSummary(fiscal.data);
     setFiscalError(fiscal.error);
     setInvoices(inv.data ?? []);
@@ -321,13 +324,14 @@ function PrivateApp({ session }: { session: Session }) {
       onRefresh={() => void loadAll()} onLogout={() => void supabase?.auth.signOut()}>
       {["dashboard", "fatture", "fiscale", "pagamenti", "import"].includes(activeTab) && <PageHeader
         title={({ dashboard: "Overview", fatture: "Entrate", fiscale: "Fiscale", pagamenti: "F24 / Pagamenti", import: "Import fatture Excel" } as Record<string, string>)[activeTab]}
-        eyebrow={activeTab === "dashboard" ? "Situazione fiscale" : "Entrate e tasse"}
-        description={({ dashboard: "Fatture, incassi e previsione fiscale. I riepiloghi attuali si riferiscono alla tua attività.", fatture: "Le tue fatture e gli incassi, in un unico spazio.", fiscale: "Parametri e previsioni per il tuo anno fiscale.", pagamenti: "Tieni traccia dei versamenti e degli adempimenti fiscali.", import: "Carica il report del tuo portale di fatturazione." } as Record<string, string>)[activeTab]}
+        eyebrow={activeTab === "dashboard" ? "Liquidità e pianificazione" : "Entrate e tasse"}
+        description={({ dashboard: "Safe to Spend e pianificazione attuale, seguiti dai riepiloghi fiscali dell’anno selezionato.", fatture: "Le tue fatture e gli incassi, in un unico spazio.", fiscale: "Parametri e previsioni per il tuo anno fiscale.", pagamenti: "Tieni traccia dei versamenti e degli adempimenti fiscali.", import: "Carica il report del tuo portale di fatturazione." } as Record<string, string>)[activeTab]}
         action={<label className="field">Anno fiscale<select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))}>{years.map(y => <option key={y}>{y}</option>)}</select></label>} />}
         {errorMessage ? <div className="notice" role="alert">{errorMessage}</div> : null}
 
         {activeTab === "dashboard" && (
           <>
+            {supabase && <PlanningOverview client={supabase} userId={session.user.id} refreshKey={planningRefresh} />}
             <section className="cards">
               <Card icon={<Euro />} title="Fatturato anno" value={fiscalMoney(fiscal?.revenue_invoiced)} />
               <Card icon={<Receipt />} title="Incassato netto" value={fiscalMoney(fiscal?.revenue_collected)} />
@@ -342,6 +346,8 @@ function PrivateApp({ session }: { session: Session }) {
           </>
         )}
 
+        {activeTab === "funds" && supabase && <FundsPage client={supabase} userId={session.user.id} />}
+        {activeTab === "goals" && supabase && <GoalsPage client={supabase} userId={session.user.id} />}
         {activeTab === "accounts" && supabase && <AccountsPage client={supabase} userId={session.user.id} />}
         {activeTab === "transactions" && supabase && <TransactionsPage client={supabase} userId={session.user.id} />}
         {activeTab === "residual-review" && supabase && <ResidualReviewPage client={supabase} userId={session.user.id} />}
