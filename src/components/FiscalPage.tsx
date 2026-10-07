@@ -1,5 +1,4 @@
 import { fiscalMoney } from "./ui/fiscalLabels";
-import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Badge } from "./ui/Badge";
@@ -8,11 +7,10 @@ import { StatCard } from "./ui/StatCard";
 import { serverErrorMessage } from "../services/residualReview";
 import { loadFiscalSettings, loadTaxObligations, saveFiscalSettings, saveTaxObligation } from "../services/fiscal";
 import { blankFiscalSettings, fiscalPaymentKinds, fiscalPaymentLabels, type FinancialTaxSummary, type FiscalYearSettings, type TaxObligation } from "../types/fiscal";
-import type { TaxSettings } from "../types/finance";
 
 const statusLabels = { confirmed: "Confermato", estimated: "Stimato", incomplete: "Dati incompleti" };
 const fieldLabels: Record<string, string> = {
-  annual_fiscal_profile: "Profilo fiscale annuale", tax_regime: "Regime fiscale", revenue_basis: "Criterio di cassa",
+  invoice_enasarco_missing: "ENASARCO assente nei documenti importati: verifica il dato originale", annual_fiscal_profile: "Profilo fiscale annuale", tax_regime: "Regime fiscale", revenue_basis: "Criterio di cassa",
   profitability_coefficient_pct: "Coefficiente di redditività %", substitute_tax_rate_pct: "Aliquota imposta sostitutiva %",
   social_security_scheme: "Gestione previdenziale", ordinary_social_rate_pct: "Aliquota previdenziale ordinaria %",
   minimum_social_income: "Minimale reddito previdenziale", first_social_band: "Prima fascia previdenziale",
@@ -40,9 +38,12 @@ export function FiscalSummaryPanel({ summary, error = "", loading = false }: { s
     <Badge variant={summary.projection_status === "confirmed" ? "success" : summary.projection_status === "incomplete" ? "danger" : "warning"}>{statusLabels[summary.projection_status]}</Badge>
     <p>Situazione al {summary.as_of}. La riserva richiesta copre obbligazioni non ancora pagate; non rappresenta disponibilità bancaria o denaro già accantonato.</p>
     {summary.missing_fields.length > 0 && <div className="notice" role="alert"><strong>Per completare la proiezione:</strong><ul>{summary.missing_fields.map(field => <li key={field}>{fieldLabels[field] ?? field}</li>)}</ul></div>}
+    {summary.warnings.includes("invoice_amount_mismatch") && <p className="notice">Importi documentali non coincidenti: lordo, ENASARCO e netto sono preservati. Verifica i warning in Income.</p>}
+    {summary.warnings.includes("invoice_import_conflicts") && <p className="notice">Conflitti d’importazione esclusi: la proiezione usa i documenti esistenti. Verifica Import Income.</p>}
     {summary.warnings.includes("profile_not_verified") && <p className="notice">Profilo non verificato: i parametri restano una stima.</p>}
-    <div className="cards mini">{cards.map(([title, value]) => <StatCard key={title} title={title} value={fiscalMoney(value)} />)}</div>
-    <p>Fatture emesse: {fiscalMoney(summary.revenue_invoiced)} · Denaro incassato al netto delle trattenute: {fiscalMoney(summary.revenue_collected)} · Crediti da incassare: {fiscalMoney(summary.receivables_uncollected)}</p>
+    <div className="cards"><StatCard title="Tax Reserve richiesta" value={fiscalMoney(summary.required_tax_reserve)} /><StatCard title="Reddito forfettario" value={fiscalMoney(summary.forfettario_income)} /><StatCard title="Imposta sostitutiva stimata" value={fiscalMoney(summary.substitute_tax_due_estimated)} /></div>
+    <details><summary>Dettaglio della proiezione fiscale e dei versamenti</summary><div className="cards mini">{cards.map(([title, value]) => <StatCard key={title} title={title} value={fiscalMoney(value)} />)}</div></details>
+    <p>Fatture emesse: {fiscalMoney(summary.revenue_invoiced)} · Denaro incassato al netto delle trattenute: {fiscalMoney(summary.revenue_collected)} · Crediti secondo la policy: {fiscalMoney(summary.receivables_uncollected)}</p>
     <p>ENASARCO già trattenuto: {fiscalMoney(summary.enasarco_withheld)} · Quota deducibile configurata: {fiscalMoney(summary.deductible_enasarco_withheld)}. Le trattenute non vengono accantonate una seconda volta.</p>
     <p>F24 non attribuiti: {fiscalMoney(summary.unallocated_payments)} ({summary.unallocated_payment_count}). Fondo fiscale riservato e differenza da colmare: non disponibili.</p>
     {summary.schedule.length > 0 && <div className="rows"><h4>Obbligazioni fiscali e previdenziali</h4>{summary.schedule.map(row => <div className="row" key={row.key}>
@@ -55,9 +56,9 @@ const numericKeys = ["profitability_coefficient_pct", "substitute_tax_rate_pct",
 function blankObligation(year: number): TaxObligation {
   return { report_year: year, tax_year: year, obligation_role: "other", payment_kind: "other_f24", amount: 0, due_date: null, status: "estimated", description: "", source_note: null };
 }
-export function FiscalPage({ client, userId, year, summary, error, loading, legacySettings, legacyEditor, onSaved }: {
+export function FiscalPage({ client, userId, year, summary, error, loading, onSaved }: {
   client: SupabaseClient; userId: string; year: number; summary: FinancialTaxSummary | null; error: string; loading: boolean;
-  legacyEditor?: ReactNode; legacySettings?: TaxSettings; onSaved: () => Promise<void>;
+  onSaved: () => Promise<void>;
 }) {
   const [form, setForm] = useState(blankFiscalSettings(year));
   const [obligations, setObligations] = useState<TaxObligation[]>([]);
@@ -88,7 +89,7 @@ export function FiscalPage({ client, userId, year, summary, error, loading, lega
       {(message || loadError) && <p className="notice" role={loadError ? "alert" : "status"}>{loadError || message}</p>}
       <div className="formGrid">
         {select("tax_regime", "Regime fiscale", [["forfettario", "Forfettario"]])}
-        {select("revenue_basis", "Criterio ricavi", [["cash", "Cassa · solo compensi incassati"]])}
+        {select("revenue_basis", "Criterio ricavi", [["cash", "Cassa · fatture incassate alla data documento"]])}
         {select("social_security_scheme", "Gestione previdenziale", [["inps_merchants", "INPS commercianti"], ["inps_separate", "INPS gestione separata"], ["none", "Nessuna contribuzione configurata"]])}
         {numericKeys.map(key => <label className="field" key={key}>{fieldLabels[key]}<input type="number" step="any" min="0" disabled={busy} value={form[key] ?? ""} onChange={e => setForm({ ...form, [key]: e.target.value === "" ? null : Number(e.target.value) })} /></label>)}
         <label className="field">Data inizio attività<input type="date" value={form.activity_start_date ?? ""} disabled={busy} onChange={e => setForm({ ...form, activity_start_date: e.target.value || null })} /></label>
@@ -101,9 +102,7 @@ export function FiscalPage({ client, userId, year, summary, error, loading, lega
         {([ ["configuration_verified", "Ho verificato il profilo e l’applicabilità dei parametri"], ["liability_schedule_verified", "Ho verificato saldi precedenti e acconti/scadenze da coprire"], ["year_finalized", "Anno chiuso: ricavi e pagamenti verificati"] ] as const).map(([key, label]) => <label className="check" key={key}><input type="checkbox" checked={form[key]} disabled={busy} onChange={e => setForm({ ...form, [key]: e.target.checked })} />{label}</label>)}
       </div>
       <Button disabled={busy || Boolean(loadError)} onClick={() => void save(false)}>Salva profilo annuale</Button>
-      {legacySettings && <details className="technicalDetails"><summary>Parametri fiscali legacy conservati</summary><p>Questi valori non alimentano la nuova proiezione finché non configuri il profilo annuale.</p><p>Imposta {legacySettings.aliquota_imposta}% · Coefficiente {legacySettings.coefficiente_redditivita}% · INPS {legacySettings.aliquota_inps}% · Minimale {fiscalMoney(legacySettings.minimale_inps)}</p>
-        {legacyEditor}
-        <Button variant="secondary" disabled={busy} onClick={() => setForm({ ...form, profitability_coefficient_pct: legacySettings.coefficiente_redditivita, substitute_tax_rate_pct: legacySettings.aliquota_imposta, ordinary_social_rate_pct: legacySettings.aliquota_inps, minimum_social_income: legacySettings.minimale_inps, configuration_verified: false, parameters_status: "estimated", source_note: "Parametri legacy da verificare; completare gestione, fasce, massimale e scadenze." })}>Copia parametri legacy nella bozza</Button></details>}
+
     </section>
     <section className="panel">
       <h3>Saldi precedenti, acconti e altre obbligazioni</h3><p>Inserisci importi e scadenze documentati. Gli acconti della stessa competenza non vengono sommati due volte alla stima annuale.</p>

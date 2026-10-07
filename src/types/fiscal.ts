@@ -41,7 +41,7 @@ export type TaxScheduleRow = { key: string; tax_year: number; payment_kind: Fisc
 export type FinancialTaxSummary = {
   tax_year: number; as_of: string; projection_status: "confirmed" | "estimated" | "incomplete"; calculated_at: string;
   missing_fields: string[]; warnings: string[]; revenue_invoiced: number; revenue_collected: number; taxable_revenue: number;
-  receivables_uncollected: number; net_invoiced: number; enasarco_invoiced: number; enasarco_withheld: number;
+  receivables_uncollected: number; net_invoiced: number; enasarco_invoiced: number | null; enasarco_withheld: number | null;
   deductible_enasarco_withheld: number; forfettario_income: number | null; social_security_due_estimated: number | null;
   social_security_minimum_due: number | null; social_security_variable_due: number | null; maternity_due: number | null;
   social_security_paid: number; deductible_social_security_paid: number; deductible_contributions_applied: number | null;
