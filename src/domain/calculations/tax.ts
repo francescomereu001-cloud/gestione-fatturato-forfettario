@@ -1,3 +1,4 @@
+// Legacy comparison/compatibility only. Authoritative fiscal values come from financial_tax_summary.
 import type { Invoice, TaxPayment, TaxSettings } from "../../types/finance";
 
 export type TaxSummary = {
