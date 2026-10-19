@@ -31,7 +31,9 @@ export type InvoiceImportRow = ParsedInvoiceRow & {
     | "exact_duplicate"
     | "conflict"
     | "rejected"
-    | "inserted";
+    | "inserted"
+    | "resolved_import"
+    | "resolved_kept";
   invoice_id: string | null;
   fingerprint: string | null;
 };
@@ -77,4 +79,31 @@ export type IncomeInvoice = Invoice & {
   source?: string;
   parser_key?: string;
   import_batch_id?: string;
+};
+
+export type InvoiceRevision = {
+  id: string;
+  action: string;
+  reason: string;
+  created_at: string;
+  before_data: IncomeInvoice;
+  after_data: IncomeInvoice;
+};
+export type InvoiceDetail = {
+  invoice: IncomeInvoice & { id: string; edit_version: number };
+  conflicts: Array<InvoiceImportRow & { file_name: string }>;
+  revisions: InvoiceRevision[];
+};
+export type InvoiceCorrection = {
+  target_invoice: string;
+  expected_version: number;
+  edit_action: "manual" | "recalculate" | "apply_import" | "keep_existing";
+  amounts: {
+    lordo: number;
+    enasarco: number | null;
+    netto: number;
+    descrizione: string;
+  };
+  edit_reason: string;
+  conflict_row: string | null;
 };

@@ -18,6 +18,8 @@ const statuses: Record<string, string> = {
   conflict: "Conflitto · preservata",
   rejected: "Scartata",
   inserted: "Inserita",
+  resolved_import: "Risolto · import applicato",
+  resolved_kept: "Risolto · valori esistenti mantenuti",
 };
 const warningLabels: Record<string, string> = {
   enasarco_missing_in_source:
@@ -137,7 +139,8 @@ export function InvoiceImportPage({
             <p className="notice">
               Conflitti esclusi dall’inserimento: confronta numero, data,
               cliente e importi con Income. Nessuna variazione viene applicata
-              automaticamente.
+              automaticamente. Dopo il commit apri la fattura in Income per
+              confrontare e risolvere il conflitto.
             </p>
           )}
           {batch.status === "staged" && (

@@ -37,7 +37,7 @@ test("Income service delegates stage/commit and KPI authority to RPC without cli
   ]);
 });
 test("missing RPC, permission and failed commit produce distinct errors", async () => {
-  assert.match(incomeError({ code: "PGRST202" }), /migration PR12/);
+  assert.match(incomeError({ code: "PGRST202" }), /migrazioni Income e modifica fatture/);
   assert.match(incomeError({ code: "42501" }), /Accesso negato/);
   const client = {
     rpc: async () => ({

@@ -8,7 +8,7 @@ import type {
 export function incomeError(reason: unknown): string {
   const e = reason as { code?: string; message?: string };
   if (e?.code === "PGRST202" || e?.code === "42883")
-    return "Servizio Income non disponibile: la migration PR12 deve essere applicata.";
+    return "Servizio Income non disponibile: verifica che siano applicate le migrazioni Income e modifica fatture.";
   if (e?.code === "42501" || e?.code === "PGRST301")
     return "Accesso negato: verifica la sessione e i permessi del tuo account.";
   return (
@@ -87,3 +87,23 @@ export async function loadIncomeInvoices(
   }
   return rows;
 }
+
+export async function loadInvoiceDetail(client: SupabaseClient, id: string) {
+  const { data, error } = await client.rpc("invoice_detail", {
+    target_invoice: id,
+  });
+  if (error) throw error;
+  return data as import("../types/income").InvoiceDetail;
+}
+export async function saveInvoiceCorrection(
+  client: SupabaseClient,
+  correction: import("../types/income").InvoiceCorrection,
+) {
+  const { data, error } = await client.rpc(
+    "save_invoice_correction",
+    correction,
+  );
+  if (error) throw error;
+  return data as IncomeInvoiceResult;
+}
+type IncomeInvoiceResult = import("../types/income").InvoiceDetail["invoice"];
