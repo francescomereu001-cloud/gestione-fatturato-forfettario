@@ -1,3 +1,4 @@
+import { InvoiceDetailPanel } from "./InvoiceDetailPanel";
 import { useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
@@ -44,6 +45,7 @@ export function IncomePage({
     netto: 0,
     document_type: "invoice",
   });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const save = async () => {
@@ -135,8 +137,21 @@ export function IncomePage({
           </ResponsiveContainer>
         </section>
       )}
+      {selectedId && (
+        <InvoiceDetailPanel
+          key={selectedId}
+          client={client}
+          invoiceId={selectedId}
+          onSaved={onSaved}
+          onClose={() => setSelectedId(null)}
+        />
+      )}
       <section className="panel">
         <h3>Elenco documenti</h3>
+        <p>
+          Apri una fattura per correggere gli importi, ricalcolare ENASARCO e
+          risolvere i conflitti.
+        </p>
         <div className="incomeTable">
           <table>
             <thead>
@@ -154,7 +169,16 @@ export function IncomePage({
               {invoices.map((i) => (
                 <tr key={i.id}>
                   <td>{i.data}</td>
-                  <td>{i.numero}</td>
+                  <td>
+                    <Button
+                      variant="ghost"
+                      disabled={!i.id}
+                      onClick={() => setSelectedId(i.id!)}
+                      aria-label={`Apri fattura ${i.numero ?? "senza numero"}`}
+                    >
+                      {i.numero || "Apri fattura"}
+                    </Button>
+                  </td>
                   <td>{i.cliente}</td>
                   <td>{fiscalMoney(i.lordo)}</td>
                   <td>{fiscalMoney(i.enasarco)}</td>

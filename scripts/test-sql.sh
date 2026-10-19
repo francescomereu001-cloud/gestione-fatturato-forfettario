@@ -56,6 +56,7 @@ run_sql supabase/tests/pr6_residual_review.sql
 run_sql supabase/tests/pr9_smart_classification.sql
 
 run_sql supabase/tests/pr12_income.sql
+run_sql supabase/tests/invoice_corrections.sql
 bash scripts/test-pr12-concurrency.sh "$pr6_container"
 
 if [[ "${PR10_RUN_ADVISORS:-0}" == 1 ]]; then

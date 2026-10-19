@@ -19,6 +19,7 @@ test("missing Income RPC never falls back to browser invoice sums", () => {
   assert.match(html, /migration PR12 mancante/);
   assert.match(html, /Non disponibile/);
   assert.match(html, /non aggiungono reddito/);
+  assert.match(html, /aria-label="Apri fattura senza numero"/);
 });
 test("dedicated Aruba import explains preview, collection policy and conflict preservation", () => {
   const html = renderToStaticMarkup(
